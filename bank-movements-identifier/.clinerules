@@ -1,0 +1,11 @@
+# Project Memory & Context
+You are working on the "SMB Local Bank Movements Reconciler". 
+Before taking any action or proposing a plan, you MUST:
+1. Read `project-context.md` to understand the core rules and tech stack.
+2. Read `architecture.md` to understand the technical decisions.
+3. Read `roadmap.md` to identify the current task status and next steps.
+
+# Task Execution
+- Always reference the Task ID (e.g., Task 1.1) you are working on.
+- If the user says "Next task", refer to `roadmap.md` to find the next incomplete item.
+- Never write code before confirming the plan aligns with `architecture.md`.

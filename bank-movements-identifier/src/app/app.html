@@ -1,0 +1,65 @@
+<div class="min-h-screen bg-gray-100 p-8 flex flex-col items-center">
+  <h1 class="text-4xl font-bold text-gray-800 mb-8">Bank Movements Identifier</h1>
+
+  <div
+    class="border-2 border-dashed rounded-lg p-12 text-center transition-colors duration-200 w-full max-w-4xl"
+    [class.border-blue-500]="dragging"
+    [class.bg-blue-50]="dragging"
+    [class.border-gray-300]="!dragging"
+    [class.bg-white]="!dragging"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (drop)="onDrop($event)"
+  >
+    <p class="text-gray-600 mb-4">Drag & drop your Excel file here, or</p>
+    
+    <input 
+      type="file" 
+      (change)="onFileSelected($event)" 
+      accept=".xlsx, .xls" 
+      class="hidden" 
+      #fileInput 
+    />
+    
+    <button 
+      (click)="fileInput.click()" 
+      class="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
+    >
+      Browse Files
+    </button>
+
+    @if (fileName) {
+      <p class="mt-4 text-gray-700 font-medium">Selected file: {{ fileName }}</p>
+    }
+  </div>
+
+  @if (excelData) {
+    <div class="mt-8 w-full max-w-6xl bg-white shadow-md rounded-lg p-6">
+      <h2 class="text-2xl font-semibold text-gray-800 mb-4">Raw Data Preview (First 10 Rows)</h2>
+      <div class="overflow-x-auto border border-gray-200 rounded-md">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              @for (header of getHeaderRow(); track $index) {
+                <th class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  {{ header || 'Column ' + ($index + 1) }}
+                </th>
+              }
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            @for (row of getDisplayRows(); track $index) {
+              <tr class="hover:bg-gray-50 transition-colors">
+                @for (cell of row; track $index) {
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    {{ cell }}
+                  </td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+</div>
