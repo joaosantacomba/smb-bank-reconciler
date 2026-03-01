@@ -164,21 +164,6 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-end gap-3 pt-2">
-            @if (!configApproved) {
-              @if (!allRolesMapped) {
-                <p class="text-sm text-gray-400">Assign all three column roles to unlock approval.</p>
-              }
-              <button (click)="approveConfiguration()" [disabled]="!allRolesMapped"
-                class="bg-gray-900 text-white rounded-lg px-6 py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-                ✓ Approve Configuration
-              </button>
-            } @else {
-              <span class="px-4 py-2.5 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-100">
-                ✓ Configuration approved — go to <strong>Mapping</strong> to assign entities.
-              </span>
-            }
-          </div>
         }
 
       </div>
@@ -200,11 +185,31 @@
             <p class="text-gray-400 text-sm mt-1">Upload a file and approve the configuration to start mapping.</p>
           </div>
         } @else {
-          <p class="text-xs text-gray-400">
-            Rows pre-filled from memory are marked <strong>auto</strong>. Type an entity and press
-            <kbd class="px-1 py-0.5 rounded bg-gray-100 border border-gray-200 text-gray-600 text-xs">Enter</kbd>
-            or click away to save permanently.
-          </p>
+          <div class="flex items-center justify-between">
+            <p class="text-xs text-gray-400">
+              Rows pre-filled from memory are marked <strong>auto</strong>. Type an entity and press
+              <kbd class="px-1 py-0.5 rounded bg-gray-100 border border-gray-200 text-gray-600 text-xs">Enter</kbd>
+              or click away to save permanently.
+            </p>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <span class="text-xs text-gray-500">Show negative amounts</span>
+              <button
+                type="button"
+                role="switch"
+                [attr.aria-checked]="showNegativeAmounts"
+                (click)="toggleShowNegativeAmounts()"
+                class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
+                [class.bg-gray-900]="showNegativeAmounts"
+                [class.bg-gray-200]="!showNegativeAmounts"
+              >
+                <span
+                  class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform"
+                  [class.translate-x-4]="showNegativeAmounts"
+                  [class.translate-x-1]="!showNegativeAmounts"
+                ></span>
+              </button>
+            </label>
+          </div>
           <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
             <div class="overflow-auto max-h-[600px]">
               <table class="min-w-full text-sm border-collapse">
@@ -292,4 +297,24 @@
     }
 
   </main>
+
+  <!-- Floating Action Bar -->
+  @if (activeTab === 'upload' && parsedSheet) {
+    <div class="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
+      @if (configApproved) {
+        <span class="px-4 py-2.5 rounded-full bg-green-50 text-green-700 text-sm font-medium border border-green-100">
+          ✓ Configuration approved — go to <strong>Mapping</strong> to assign entities.
+        </span>
+      } @else {
+        @if (!allRolesMapped) {
+          <p class="text-sm text-gray-400">Assign all three column roles to unlock approval.</p>
+        }
+        <button (click)="approveConfiguration()" [disabled]="!allRolesMapped"
+          class="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+          ✓ Approve Configuration
+        </button>
+      }
+    </div>
+  }
+
 </div>

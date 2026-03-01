@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
+import { ChangeDetectorRef, Component, OnInit } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { ExcelParserService } from './services/excel-parser.service';
 import { ParsedSheet } from './models/parsed-sheet.model';
@@ -36,7 +36,7 @@ export interface MatchRow {
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
-export class AppComponent {
+export class AppComponent implements OnInit {
   // ── Tab Navigation ────────────────────────────────────────────────────────
 
   readonly tabs: Tab[] = [
@@ -95,11 +95,28 @@ export class AppComponent {
   /** rawIndex → { label, source } for the matching view */
   matchLabels = new Map<number, { label: string; source: 'auto' | 'manual' | '' }>();
 
+  // ── User Preferences ──────────────────────────────────────────────────────
+
+  /** When false (default), negative-amount rows are hidden in the Mapping tab. */
+  showNegativeAmounts = false;
+
   constructor(
     private excelParser: ExcelParserService,
     private persistence: PersistenceService,
     private cdr: ChangeDetectorRef,
   ) {}
+
+  async ngOnInit(): Promise<void> {
+    const prefs = await this.persistence.getPreferences();
+    this.showNegativeAmounts = prefs.showNegativeAmounts;
+  }
+
+  async toggleShowNegativeAmounts(): Promise<void> {
+    this.showNegativeAmounts = !this.showNegativeAmounts;
+    await this.persistence.patchPreferences({ showNegativeAmounts: this.showNegativeAmounts });
+  }
+
+  // ── File Handling ─────────────────────────────────────────────────────────
 
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
@@ -135,6 +152,7 @@ export class AppComponent {
     try {
       this.rawData = await this.excelParser.parseExcel(file);
       this.reclassify();
+      this.cdr.detectChanges();
     } catch {
       alert('Error reading the Excel file. Please check the format.');
       this.fileName = '';
@@ -342,7 +360,7 @@ export class AppComponent {
       .filter(([, r]) => r === 'description')
       .map(([k]) => Number(k));
 
-    return this.tableRows
+    const rows = this.tableRows
       .filter((r) => r.type === 'movement')
       .map((r) => {
         const entry = this.matchLabels.get(r.rawIndex) ?? { label: '', source: '' as const };
@@ -355,5 +373,12 @@ export class AppComponent {
           source: entry.source,
         };
       });
+
+    if (this.showNegativeAmounts) return rows;
+
+    return rows.filter((row) => {
+      const numeric = parseFloat(String(row.amount).replace(/[^\d.,-]/g, '').replace(',', '.'));
+      return isNaN(numeric) || numeric >= 0;
+    });
   }
 }
