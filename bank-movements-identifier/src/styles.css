@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+/* Procura em toda a pasta src, independentemente de onde o CSS esteja */
+@source "../src/**/*.{html,ts}";

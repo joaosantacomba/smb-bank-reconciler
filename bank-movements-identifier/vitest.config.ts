@@ -1,10 +1,13 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+  plugins: [
+    tailwindcss(),
+  ],
   test: {
     globals: true,
     environment: 'node',
-    // Only run pure unit tests (no Angular TestBed) under vitest
     include: ['src/app/services/**/*.spec.ts', 'src/app/models/**/*.spec.ts'],
   },
 });

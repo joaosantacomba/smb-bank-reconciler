@@ -5,6 +5,12 @@ import { ParsedSheet } from './models/parsed-sheet.model';
 import { PersistenceService } from './services/persistence.service';
 
 export type ColumnRole = 'date' | 'description' | 'amount';
+export type TabId = 'upload' | 'mapping' | 'memory' | 'history';
+
+export interface Tab {
+  id: TabId;
+  label: string;
+}
 
 export interface RowDisplay {
   rawIndex: number;
@@ -31,6 +37,48 @@ export interface MatchRow {
   styleUrl: './app.scss',
 })
 export class AppComponent {
+  // ── Tab Navigation ────────────────────────────────────────────────────────
+
+  readonly tabs: Tab[] = [
+    { id: 'upload', label: 'Upload' },
+    { id: 'mapping', label: 'Mapping' },
+    { id: 'memory', label: 'Memory' },
+    { id: 'history', label: 'History' },
+  ];
+
+  activeTab: TabId = 'upload';
+  configApproved = false;
+
+  isTabEnabled(tab: TabId): boolean {
+    if (tab === 'upload') return true;
+    return this.configApproved;
+  }
+
+  selectTab(tab: TabId): void {
+    if (this.isTabEnabled(tab)) {
+      this.activeTab = tab;
+    }
+  }
+
+  approveConfiguration(): void {
+    this.configApproved = true;
+    this.activeTab = 'mapping';
+  }
+
+  resetConfiguration(): void {
+    this.configApproved = false;
+    this.activeTab = 'upload';
+    this.fileName = '';
+    this.rawData = null;
+    this.parsedSheet = null;
+    this.rowOverrides = new Map();
+    this.columnMapping = {};
+    this.matchLabels = new Map();
+    this.dragging = false;
+  }
+
+  // ── File Handling ─────────────────────────────────────────────────────────
+
   dragging = false;
   fileName = '';
 
@@ -52,8 +100,6 @@ export class AppComponent {
     private persistence: PersistenceService,
     private cdr: ChangeDetectorRef,
   ) {}
-
-  // ── File Handling ─────────────────────────────────────────────────────────
 
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
@@ -81,6 +127,11 @@ export class AppComponent {
 
   async handleFile(file: File): Promise<void> {
     this.fileName = file.name;
+    // Reset approval when a new file is loaded
+    this.configApproved = false;
+    this.rowOverrides = new Map();
+    this.columnMapping = {};
+    this.matchLabels = new Map();
     try {
       this.rawData = await this.excelParser.parseExcel(file);
       this.reclassify();
@@ -188,7 +239,6 @@ export class AppComponent {
     return this.columnMapping[colIndex] ?? '';
   }
 
-  /** Maximum number of columns that can share the 'description' role. */
   readonly maxDescriptionColumns = 3;
 
   isRoleDisabled(role: ColumnRole, forColIndex: number): boolean {
@@ -228,7 +278,6 @@ export class AppComponent {
 
   // ── Matching ──────────────────────────────────────────────────────────────
 
-  /** Builds a Record of { headerName → cellValue } for all description columns. */
   private buildDescriptionRecord(row: any[]): Record<string, string> {
     if (!this.parsedSheet) return {};
     const record: Record<string, string> = {};
@@ -242,7 +291,6 @@ export class AppComponent {
     return record;
   }
 
-  /** Queries DB for every movement row and pre-fills matchLabels. */
   private async autoMatchRows(): Promise<void> {
     const movements = this.tableRows.filter((r) => r.type === 'movement');
     const newLabels = new Map<number, { label: string; source: 'auto' | 'manual' | '' }>();
@@ -257,23 +305,16 @@ export class AppComponent {
     this.matchLabels = newLabels;
   }
 
-  /**
-   * Called when the user finishes editing an entity label.
-   * Persists a new rule keyed on the first description column value.
-   */
   async onLabelCommit(rawIndex: number, value: string): Promise<void> {
     const trimmed = value.trim();
     const current = this.matchLabels.get(rawIndex);
-    // Skip if value is empty or unchanged
     if (!trimmed || current?.label === trimmed) return;
 
     this.matchLabels.set(rawIndex, { label: trimmed, source: 'manual' });
 
-    // Find source row data
     const rowDisplay = this.tableRows.find((r) => r.rawIndex === rawIndex);
     if (!rowDisplay || !this.parsedSheet) return;
 
-    // Use the first description column to build the rule condition
     const firstDescEntry = Object.entries(this.columnMapping).find(([, r]) => r === 'description');
     if (!firstDescEntry) return;
     const descColIdx = Number(firstDescEntry[0]);
@@ -288,7 +329,6 @@ export class AppComponent {
     });
   }
 
-  /** Movement rows projected for the matching view table. */
   get matchingRows(): MatchRow[] {
     if (!this.allRolesMapped || !this.parsedSheet) return [];
 

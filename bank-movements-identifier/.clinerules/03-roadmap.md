@@ -29,17 +29,21 @@
     - [x] **Auto-Match on Load:** When all roles are mapped, `autoMatchRows()` queries `PersistenceService.findMatchingRule()` for every movement row using the mapped description columns. Matched rows are pre-filled.
     - [x] **Visual States:** `? unknown` (gray) / `✓ auto` (green) / `✎ manual` (blue) badges distinguish match sources.
     - [x] **Implicit Learning:** User types an entity and presses Enter or blurs the input → `onLabelCommit()` saves a new rule to IndexedDB immediately via `PersistenceService.addRule()`. Available in all future sessions.
-- [ ] **Task 2.3: Data Portability (Backup & Sync)**
-    - [ ] Implement Export to JSON (Backup your "Memory").
-    - [ ] Implement Import from JSON (Migrate history between browsers/PCs).
+- [ ] **Task 2.3: UX Shell & Global Navigation**
+    - [x] Implement the 4-Tab navigation bar (Upload, Mapping, Memory, History).
+    - [x] **Approval Gate:** Implement the "Approve Configuration" button to unlock subsequent tabs only after header/column validation.
+    - [x] **UI Migration:** Refactor existing views to follow the `design-system.md` (cards, buttons, and neutral palette).
+    - [x] **Empty States:** Implement centered empty state messages for all tabs.
+- [ ] **Task 2.4: Persistence Management & Portability**
+    - [ ] **Memory Tab:** Create CRUD interface for the Rules Dictionary (view/delete specific rules).
+    - [ ] **Export/Import:** Implement JSON backup/restore for both Rules and History stores.
+    - [ ] **Monthly History:** Implement the historical reporting view grouped by month.
 
 ## Phase 3: Advanced Matching & Usability
 - [ ] Advanced fuzzy matching (Levenshtein distance).
 - [ ] Bulk actions (Apply rule to all similar rows).
-- [ ] Confidence scores for automatic suggestions.
 - [ ] Final Export of reconciled data to CSV/Excel.
 
 ## Phase 4: Automation & Integrations
 - [ ] Local Machine Learning for smarter categorization suggestions.
 - [ ] Offline capabilities (PWA setup).
-- [ ] Multi-currency support and rule templates.
