@@ -34,12 +34,7 @@
     - [x] **Approval Gate:** Implement the "Approve Configuration" button to unlock subsequent tabs only after header/column validation.
     - [x] **UI Migration:** Refactor existing views to follow the `design-system.md` (cards, buttons, and neutral palette).
     - [x] **Empty States:** Implement centered empty state messages for all tabs.
-- [ ] **Task 2.4: Smart Matching & Entity Normalization**
-    - [ ] **Description Normalizer:** Logic to strip noise (dates like `01/03`, transaction IDs, and extra spaces) from bank strings.
-    - [ ] **Fuzzy Matching (Levenshtein):** Implement similarity scoring for non-exact matches. 
-        - Formula: $S(A, B) = 1 - \frac{\text{dist\_levenshtein}(A, B)}{\max(|A|, |B|)}$
-    - [ ] **Entity Autocomplete:** Suggest existing entities during manual input to prevent duplicates (e.g., "Continente" vs "Continente S.A.").
-    - [ ] **Fuzzy Badge UI:** New `? Maybe` (orange) state for matches with $>80\%$ confidence.
+
 ## Phase 3: Intelligent Matching & Pattern Recognition
 **Objective:** Transition from static string matching to a dynamic pattern-recognition engine that learns "dialects" and preserves data integrity.
 
@@ -60,28 +55,38 @@
     - [x] Logic must return the specific "Evidence" (which historical rule or tokens triggered the match).
 
 - [ ] **Task 3.4: Adaptive Pattern Learning**
-    - [ ] **Rule Evolution:** When a user approves a `? suggested` match, the system must update the existing pattern in IndexedDB to incorporate the new variation (merging tokens).
-    - [ ] **Conflict Management:** If a pattern could match multiple entities, flag it for manual review instead of auto-matching.
-
+    - [ ] **Rule Evolution:** When a user approves a `? suggested` match, update the existing pattern to incorporate the new variation (merging tokens).
+    - [ ] **Conflict Management:** Flag patterns that match multiple entities for manual review.
 - [ ] **Task 3.5: Transparency & Evidence UI**
-    - [ ] **Status Badges:** Implement `✓ auto` (Green/Exact/Structural) and `? suggested` (Orange/Similarity) labels.
-    - [ ] **Visual Highlighting:** Use the tokenizer metadata to highlight "Anchors" directly in the table row (bold or underlined).
-    - [ ] **Evidence Modal:** - Add a "Details" button to every matched row.
-        - Open a central modal showing the current movement side-by-side with the **top 3 historical matches** for that entity.
-    - [ ] **Smart Autocomplete:** When typing an entity, prioritize names that have already been matched
+    - [ ] **Visual Highlighting:** Use tokenizer metadata to highlight "Anchors" directly in the table rows.
+    - [ ] **Evidence Modal:** Implement a central modal showing the current movement vs. the top 3 historical matches.
 
-## Phase 4: Historical Insights & Portability
-- [ ] **Task 4.1: Memory Management Tab**
-    - [ ] CRUD interface for the Rules Dictionary (Edit/Delete learned patterns).
-- [ ] **Task 4.2: Monthly History & Reporting**
-    - [ ] Grouped view of reconciled movements by month/category.
-- [ ] **Task 4.3: Data Portability**
-    - [ ] JSON Export/Import for Rules and History (Backup/Privacy control).
+## Phase 4: Historical Records & Stability
+**Objective:** Move from session-based tool to a permanent financial log for multi-month data.
+
+- [x] **Task 4.1: The Vault (Persistent History)**
+    - [x] Create a `Movements` table in IndexedDB (Dexie) to store reconciled data permanently.
+    - [x] **Schema:** `id`, `date`, `description`, `amount`, `entity`, `category`, `reconciledAt`.
+    - [x] **UX:** Implement the **"Save to History"** button on the Mapping tab — an iterative action that can be triggered at any point to persist all currently labeled rows to the vault. History tab shows all saved movements.
+
+- [x] **Task 4.2: Duplicate Protection**
+    - [x] **Ingestion Shield:** Automatically detect and skip rows already present in History (match by `date + amount + description`).
+    - [x] **Collision UI:** Show summary of added vs. ignored (duplicate) movements.
+
+- [x] **Task 4.3: History & Spending Insights (Tab 4)**
+    - [x] **Monthly Browser:** Interface to explore reconciled data grouped by Month/Year.
+    - [x] **Global Search:** Search bar to find any transaction across the entire history (descriptions, entity and value).
+
+- [x] **Task 4.4: The Rules Library (Tab 3)**
+    - [x] **Dictionary Management:** Searchable list of all learned "Dialects" and patterns (entity cards with scope-coloured chips).
+    - [x] **Manual Cleanup:** Inline rename entity, delete entity, delete individual dialect pattern. "Clear Memory" button to wipe all rules.
+
+- [x] **Task 4.5: Data Portability & Safety**
+    - [x] **Import:** Upload a previously exported JSON backup — additive merge (entities/dialects/movements). Summary banner on completion.
+    - [x] **Clean History:** Destructive "Clear History" button on the History tab with confirmation guard.
+    - [ ] **Export:** Me
 
 ## Phase 5: Automation & Final Polish
-- [ ] **Task 5.1: Bulk Actions**
-    - [ ] "Apply this entity to all similar rows" in one click.
-- [ ] **Task 5.2: Final Export**
-    - [ ] Export reconciled data to cleaned CSV/Excel.
-- [ ] **Task 5.3: Offline/PWA**
-    - [ ] Service Worker setup for full offline use.
+- [ ] **Task 5.1: Bulk Actions** (Apply entity to all similar rows in one click).
+- [ ] **Task 5.2: Final UI Refinements & Empty States.**
+- [ ] **Task 5.3: Offline/PWA Setup.**

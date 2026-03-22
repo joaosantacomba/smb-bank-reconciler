@@ -1,0 +1,39 @@
+{
+  "entities": [
+    { "id": 1, "name": "Continente", "createdAt": 1700000000000 },
+    { "id": 2, "name": "EDP Energia", "createdAt": 1700000100000 },
+    { "id": 3, "name": "NOS Comunicações", "createdAt": 1700000200000 },
+    { "id": 4, "name": "CTT Correios", "createdAt": 1700000300000 },
+    { "id": 5, "name": "Galp Combustíveis", "createdAt": 1700000400000 }
+  ],
+  "dialects": [
+    { "id": 1,  "entityId": 1, "pattern": "COMPRA CONTINENTE LDA",            "scope": "exact",      "sourceField": "Descrição", "priority": 1, "createdAt": 1700000000000 },
+    { "id": 2,  "entityId": 1, "pattern": "compra continente lda",             "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000000000 },
+    { "id": 3,  "entityId": 1, "pattern": "PAGAMENTO CONTINENTE SA",           "scope": "exact",      "sourceField": "Descrição", "priority": 1, "createdAt": 1700000050000 },
+    { "id": 4,  "entityId": 1, "pattern": "pagamento continente sa",           "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000050000 },
+    { "id": 5,  "entityId": 2, "pattern": "EDP COMERCIAL FATURA",              "scope": "exact",      "sourceField": "Descrição", "priority": 1, "createdAt": 1700000100000 },
+    { "id": 6,  "entityId": 2, "pattern": "edp comercial fatura",              "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000100000 },
+    { "id": 7,  "entityId": 2, "pattern": "DD EDP {id}",                       "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000150000 },
+    { "id": 8,  "entityId": 3, "pattern": "NOS TELECOMUNICACOES SA",           "scope": "exact",      "sourceField": "Descrição", "priority": 1, "createdAt": 1700000200000 },
+    { "id": 9,  "entityId": 3, "pattern": "nos telecomunicacoes sa",           "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000200000 },
+    { "id": 10, "entityId": 4, "pattern": "CTT EXPRESSO LOJA",                 "scope": "exact",      "sourceField": "Descrição", "priority": 1, "createdAt": 1700000300000 },
+    { "id": 11, "entityId": 4, "pattern": "ctt expresso loja",                 "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000300000 },
+    { "id": 12, "entityId": 5, "pattern": "GALP ENERGIA ESTACAO",              "scope": "exact",      "sourceField": "Descrição", "priority": 1, "createdAt": 1700000400000 },
+    { "id": 13, "entityId": 5, "pattern": "galp energia estacao",              "scope": "structural", "sourceField": "Descrição", "priority": 1, "createdAt": 1700000400000 }
+  ],
+  "movements": [
+    { "id": 1,  "date": "2024-01-03", "description": "COMPRA CONTINENTE LDA",    "amount": 87.45,  "entity": "Continente",        "reconciledAt": 1704326400000 },
+    { "id": 2,  "date": "2024-01-05", "description": "EDP COMERCIAL FATURA",     "amount": 142.30, "entity": "EDP Energia",        "reconciledAt": 1704499200000 },
+    { "id": 3,  "date": "2024-01-10", "description": "NOS TELECOMUNICACOES SA",  "amount": 49.99,  "entity": "NOS Comunicações",   "reconciledAt": 1704931200000 },
+    { "id": 4,  "date": "2024-01-15", "description": "PAGAMENTO CONTINENTE SA",  "amount": 63.20,  "entity": "Continente",        "reconciledAt": 1705363200000 },
+    { "id": 5,  "date": "2024-01-18", "description": "CTT EXPRESSO LOJA",        "amount": 12.50,  "entity": "CTT Correios",       "reconciledAt": 1705622400000 },
+    { "id": 6,  "date": "2024-01-22", "description": "GALP ENERGIA ESTACAO",     "amount": 75.00,  "entity": "Galp Combustíveis",  "reconciledAt": 1705968000000 },
+    { "id": 7,  "date": "2024-02-02", "description": "COMPRA CONTINENTE LDA",    "amount": 94.10,  "entity": "Continente",        "reconciledAt": 1706832000000 },
+    { "id": 8,  "date": "2024-02-05", "description": "EDP COMERCIAL FATURA",     "amount": 138.75, "entity": "EDP Energia",        "reconciledAt": 1707091200000 },
+    { "id": 9,  "date": "2024-02-12", "description": "NOS TELECOMUNICACOES SA",  "amount": 49.99,  "entity": "NOS Comunicações",   "reconciledAt": 1707696000000 },
+    { "id": 10, "date": "2024-02-20", "description": "GALP ENERGIA ESTACAO",     "amount": 68.40,  "entity": "Galp Combustíveis",  "reconciledAt": 1708387200000 }
+  ],
+  "preferences": {
+    "showNegativeAmounts": false
+  }
+}

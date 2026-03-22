@@ -1,10 +1,13 @@
 import { ChangeDetectorRef, Component, OnInit } from '@angular/core';
-import { DecimalPipe, NgClass } from '@angular/common';
+import { DatePipe, DecimalPipe, NgClass } from '@angular/common';
 import { ExcelParserService } from './services/excel-parser.service';
 import { ParsedSheet } from './models/parsed-sheet.model';
 import { PersistenceService } from './services/persistence.service';
 import { MovementTokenizerService } from './services/movement-tokenizer.service';
 import { MatchLevel } from './models/match-evidence.model';
+import { IMovement } from './models/movement.model';
+import { ICanonicalEntity } from './models/canonical-entity.model';
+import { IDialect } from './models/dialect.model';
 
 export type ColumnRole = 'date' | 'description' | 'amount';
 export type TabId = 'upload' | 'mapping' | 'memory' | 'history';
@@ -38,7 +41,7 @@ export interface MatchRow {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [NgClass, DecimalPipe],
+  imports: [NgClass, DecimalPipe, DatePipe],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -63,6 +66,9 @@ export class AppComponent implements OnInit {
   selectTab(tab: TabId): void {
     if (this.isTabEnabled(tab)) {
       this.activeTab = tab;
+      if (tab === 'memory') {
+        this.loadMemory().then(() => this.cdr.detectChanges());
+      }
     }
   }
 
@@ -84,6 +90,7 @@ export class AppComponent implements OnInit {
       { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
     >();
     this.dragging = false;
+    this.lastSaveSummary = null;
   }
 
   // ── File Handling ─────────────────────────────────────────────────────────
@@ -107,6 +114,229 @@ export class AppComponent implements OnInit {
     { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
   >();
 
+  // ── Memory Tab (Task 4.4) ─────────────────────────────────────────────────
+
+  memoryEntities: Array<ICanonicalEntity & { dialects: IDialect[] }> = [];
+  memorySearchQuery = '';
+  editingEntityId: number | null = null;
+  editingEntityName = '';
+  importSummary: { entities: number; dialects: number; movements: number } | null = null;
+  importing = false;
+
+  onMemorySearch(event: Event): void {
+    this.memorySearchQuery = (event.target as HTMLInputElement).value;
+  }
+
+  get filteredMemoryEntities(): Array<ICanonicalEntity & { dialects: IDialect[] }> {
+    const q = this.memorySearchQuery.trim().toLowerCase();
+    if (!q) return this.memoryEntities;
+    return this.memoryEntities.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.dialects.some((d) => d.pattern.toLowerCase().includes(q)),
+    );
+  }
+
+  get totalDialectCount(): number {
+    return this.memoryEntities.reduce((sum, e) => sum + e.dialects.length, 0);
+  }
+
+  private async loadMemory(): Promise<void> {
+    const entities = await this.persistence.getAllEntities();
+    this.memoryEntities = await Promise.all(
+      entities.map(async (e) => ({
+        ...e,
+        dialects: await this.persistence.getDialectsForEntity(e.id!),
+      })),
+    );
+  }
+
+  startEditEntity(entity: ICanonicalEntity): void {
+    this.editingEntityId = entity.id!;
+    this.editingEntityName = entity.name;
+  }
+
+  cancelEditEntity(): void {
+    this.editingEntityId = null;
+    this.editingEntityName = '';
+  }
+
+  async commitRenameEntity(id: number, value: string): Promise<void> {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      this.cancelEditEntity();
+      return;
+    }
+    await this.persistence.renameEntity(id, trimmed);
+    this.cancelEditEntity();
+    await this.loadMemory();
+    this.cdr.detectChanges();
+  }
+
+  async onDeleteEntity(id: number): Promise<void> {
+    if (!confirm('Delete this entity and all its patterns? This cannot be undone.')) return;
+    await this.persistence.deleteEntity(id);
+    await this.loadMemory();
+    this.cdr.detectChanges();
+  }
+
+  async onDeleteDialect(dialectId: number): Promise<void> {
+    if (!confirm('Delete this pattern? This cannot be undone.')) return;
+    await this.persistence.deleteDialect(dialectId);
+    await this.loadMemory();
+    this.cdr.detectChanges();
+  }
+
+  async clearMemory(): Promise<void> {
+    if (!confirm('Delete ALL rules and patterns permanently? This cannot be undone.')) return;
+    await this.persistence.clearEntitiesAndDialects();
+    await this.loadMemory();
+    this.cdr.detectChanges();
+  }
+
+  // ── History ───────────────────────────────────────────────────────────────
+
+  /** All movements stored in the vault, used to populate the History tab. */
+  historyMovements: IMovement[] = [];
+
+  /** True while a Save to History operation is in progress. */
+  savingToHistory = false;
+
+  /** Summary shown after the last Save to History: { saved, skipped } counts. */
+  lastSaveSummary: { saved: number; skipped: number } | null = null;
+
+  // ── History tab filters (Task 4.3) ────────────────────────────────────────
+
+  /** Current value of the global search bar on the History tab. */
+  historySearchQuery = '';
+
+  /** Selected month filter key in `YYYY-MM` format, or `''` for "All". */
+  historySelectedMonth = '';
+
+  /** Update the search query (bound to the history search input). */
+  onHistorySearch(event: Event): void {
+    this.historySearchQuery = (event.target as HTMLInputElement).value;
+  }
+
+  /** Select a month filter pill. */
+  selectHistoryMonth(month: string): void {
+    this.historySelectedMonth = month;
+  }
+
+  /**
+   * Try to extract a `YYYY-MM` key from a date string in common bank formats:
+   * - ISO: `YYYY-MM-DD`
+   * - European / ambiguous: `D/M/YY`, `DD/MM/YYYY`, `DD-MM-YYYY`, `DD.MM.YYYY`
+   *   (also handles 2-digit years from legacy Excel formatting)
+   *
+   * Disambiguation strategy for `A/B/Y` format:
+   *   - If A > 12 → must be DD/MM (A is day)
+   *   - If B > 12 → must be MM/DD, but since we target Portuguese bank files
+   *     and B being a day > 12 is valid, we default to DD/MM
+   *   - When both A and B ≤ 12 → prefer DD/MM (European default)
+   *
+   * Returns `null` when the date cannot be parsed.
+   */
+  private extractMonthKey(date: string): string | null {
+    const trimmed = date.trim();
+
+    // ISO: YYYY-MM-DD[…]
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-\d{2}/);
+    if (isoMatch) {
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      if (m >= 1 && m <= 12 && y >= 1900 && y <= 2100) {
+        return `${isoMatch[1]}-${isoMatch[2]}`;
+      }
+    }
+
+    // D/M/YY, DD/MM/YYYY and variants (2- or 4-digit year, any separator)
+    const dmyMatch = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (dmyMatch) {
+      const a = parseInt(dmyMatch[1], 10);
+      const b = parseInt(dmyMatch[2], 10);
+      let y = parseInt(dmyMatch[3], 10);
+      // Expand 2-digit year: treat as 2000s (valid for modern bank data)
+      if (y < 100) y += 2000;
+
+      if (y < 1900 || y > 2100) return null;
+
+      // Determine which component is the month:
+      //   - If a > 12 → a is definitely the day, b is the month (DD/MM)
+      //   - Otherwise  → prefer European DD/MM (b as month) by default
+      const month = b; // European: second component is month
+      const day = a;
+
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return `${y}-${String(month).padStart(2, '0')}`;
+      }
+
+      // Last resort: try swapping (MM/DD — US format from Excel M/D/YY code)
+      if (a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+        return `${y}-${String(a).padStart(2, '0')}`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Distinct `YYYY-MM` keys present in `historyMovements` (derived from
+   * the movement's own date, not `reconciledAt`), sorted newest-first.
+   * Only well-formed dates are included.
+   */
+  get availableMonths(): string[] {
+    const keys = new Set<string>();
+    for (const m of this.historyMovements) {
+      const key = this.extractMonthKey(m.date);
+      if (key) keys.add(key);
+    }
+    return [...keys].sort((a, b) => b.localeCompare(a));
+  }
+
+  /**
+   * Format a `YYYY-MM` key for display, e.g. `"2024-03"` → `"Mar 2024"`.
+   */
+  formatMonthLabel(key: string): string {
+    const [year, month] = key.split('-');
+    const date = new Date(Number(year), Number(month) - 1, 1);
+    return date.toLocaleString('default', { month: 'short', year: 'numeric' });
+  }
+
+  /**
+   * `historyMovements` after applying the month filter and search query.
+   * The month filter matches by the extracted `YYYY-MM` key, so it works
+   * regardless of whether the stored date is ISO or European format.
+   */
+  get filteredHistoryMovements(): IMovement[] {
+    let list = this.historyMovements;
+
+    if (this.historySelectedMonth) {
+      list = list.filter(
+        (m) => this.extractMonthKey(m.date) === this.historySelectedMonth,
+      );
+    }
+
+    const q = this.historySearchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (m) =>
+          m.description.toLowerCase().includes(q) ||
+          m.entity.toLowerCase().includes(q) ||
+          String(m.amount).includes(q),
+      );
+    }
+
+    return list;
+  }
+
+  /**
+   * Sum of amounts in the currently filtered history view.
+   */
+  get filteredHistoryTotal(): number {
+    return this.filteredHistoryMovements.reduce((sum, m) => sum + m.amount, 0);
+  }
+
   // ── User Preferences ──────────────────────────────────────────────────────
 
   /** When false (default), negative-amount rows are hidden in the Mapping tab. */
@@ -122,6 +352,7 @@ export class AppComponent implements OnInit {
   async ngOnInit(): Promise<void> {
     const prefs = await this.persistence.getPreferences();
     this.showNegativeAmounts = prefs.showNegativeAmounts;
+    await this.loadHistory();
   }
 
   async toggleShowNegativeAmounts(): Promise<void> {
@@ -398,6 +629,92 @@ export class AppComponent implements OnInit {
           createdAt: now,
         });
       }
+    }
+  }
+
+  // ── History ───────────────────────────────────────────────────────────────
+
+  async clearHistory(): Promise<void> {
+    if (!confirm('Delete ALL saved movements permanently? This cannot be undone.')) return;
+    await this.persistence.clearMovements();
+    this.historySelectedMonth = '';
+    await this.loadHistory();
+    this.cdr.detectChanges();
+  }
+
+  async onImportFile(event: Event): Promise<void> {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    this.importing = true;
+    this.importSummary = null;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const result = await this.persistence.importAll(data);
+      this.importSummary = result;
+      await this.loadMemory();
+      await this.loadHistory();
+      this.cdr.detectChanges();
+    } catch (e) {
+      alert('Import failed: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      this.importing = false;
+      (event.target as HTMLInputElement).value = '';
+    }
+  }
+
+  /** Reload the vault contents into `historyMovements`. */
+  private async loadHistory(): Promise<void> {
+    this.historyMovements = await this.persistence.getAllMovements();
+    // Auto-select the most recent month on first load (or if the previously
+    // selected month no longer exists in the new data set).
+    const months = this.availableMonths;
+    if (months.length && (!this.historySelectedMonth || !months.includes(this.historySelectedMonth))) {
+      this.historySelectedMonth = months[0]; // newest first
+    }
+  }
+
+  /**
+   * The number of labeled rows in the current mapping session
+   * (both auto and manual).
+   */
+  get labeledRowCount(): number {
+    return this.matchingRows.filter((r) => r.label.trim()).length;
+  }
+
+  /**
+   * Save all labeled rows in the current session to the permanent vault.
+   * Only rows with a non-empty entity label are persisted.
+   * Can be triggered at any time — iterative, not a one-shot "finalize".
+   */
+  async saveToHistory(): Promise<void> {
+    if (this.savingToHistory) return;
+    const labeled = this.matchingRows.filter((r) => r.label.trim());
+    if (!labeled.length) return;
+
+    this.savingToHistory = true;
+    this.lastSaveSummary = null;
+
+    try {
+      const now = Date.now();
+      const movements: Omit<IMovement, 'id'>[] = labeled.map((r) => {
+        const rawAmount = String(r.amount).replace(/[^\d.,-]/g, '').replace(',', '.');
+        const amount = parseFloat(rawAmount);
+        return {
+          date: r.date,
+          description: r.descriptions.filter(Boolean).join(' | '),
+          amount: isNaN(amount) ? 0 : amount,
+          entity: r.label.trim(),
+          reconciledAt: now,
+        };
+      });
+
+      const result = await this.persistence.addMovements(movements);
+      await this.loadHistory();
+      this.lastSaveSummary = { saved: result.saved, skipped: result.skipped };
+      this.cdr.detectChanges();
+    } finally {
+      this.savingToHistory = false;
     }
   }
 

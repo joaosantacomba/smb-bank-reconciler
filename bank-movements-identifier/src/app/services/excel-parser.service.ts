@@ -28,9 +28,15 @@ export class ExcelParserService {
       const workbook = XLSX.read(buffer, { type: 'array' });
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
 
-      // header: 1  → 2D array [row][column]
-      // raw: false → everything as string so we control number/date parsing
-      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as any[][];
+      // header: 1          → 2D array [row][column]
+      // raw: false         → everything as string so we control number/date parsing
+      // dateNF: yyyy-mm-dd → force all Excel date cells to ISO format, regardless
+      //                      of the cell's built-in format code (fixes M/D/YY etc.)
+      const data = XLSX.utils.sheet_to_json(worksheet, {
+        header: 1,
+        raw: false,
+        dateNF: 'yyyy-mm-dd',
+      }) as any[][];
 
       return data;
     } catch (error) {

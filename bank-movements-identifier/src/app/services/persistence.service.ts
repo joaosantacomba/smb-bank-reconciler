@@ -8,6 +8,7 @@ import {
 import { ICanonicalEntity } from '../models/canonical-entity.model';
 import { IDialect, DialectScope } from '../models/dialect.model';
 import { MatchEvidence } from '../models/match-evidence.model';
+import { IMovement } from '../models/movement.model';
 import {
   levenshteinSimilarity,
   normalizeForSimilarity,
@@ -36,6 +37,7 @@ class AppDatabase extends Dexie {
   preferences!: Table<IPreferencesRecord, number>;
   entities!: Table<ICanonicalEntity, number>;
   dialects!: Table<IDialect, number>;
+  movements!: Table<IMovement, number>;
 
   constructor(options?: DexieOptions) {
     super('BankReconcilerDB', options);
@@ -51,17 +53,17 @@ class AppDatabase extends Dexie {
       preferences: 'id',
     });
 
-    // ── v3: entity/dialect hierarchy — migrate legacy rules ──────────────────
-    this.version(3)
-      .stores({
-        rules: '++id, targetLabel, priority',
-        preferences: 'id',
-        // &name = unique index on the canonical name
-        entities: '++id, &name',
-        // entityId allows efficient lookup of all dialects for one entity
-        dialects: '++id, entityId, pattern, scope, priority',
-      })
-      .upgrade(async (tx) => {
+      // ── v3: entity/dialect hierarchy — migrate legacy rules ──────────────────
+      this.version(3)
+        .stores({
+          rules: '++id, targetLabel, priority',
+          preferences: 'id',
+          // &name = unique index on the canonical name
+          entities: '++id, &name',
+          // entityId allows efficient lookup of all dialects for one entity
+          dialects: '++id, entityId, pattern, scope, priority',
+        })
+        .upgrade(async (tx) => {
         const now = Date.now();
         const legacyRules = await tx.table<IRule>('rules').toArray();
         if (!legacyRules.length) return;
@@ -103,6 +105,16 @@ class AppDatabase extends Dexie {
         // ── 3. Clear the legacy rules table ───────────────────────────────────
         await tx.table('rules').clear();
       });
+
+    // ── v4: add movements vault ───────────────────────────────────────────────
+    this.version(4).stores({
+      rules: '++id, targetLabel, priority',
+      preferences: 'id',
+      entities: '++id, &name',
+      dialects: '++id, entityId, pattern, scope, priority',
+      // [date+amount+description] compound index for duplicate detection (Task 4.2)
+      movements: '++id, date, entity, reconciledAt, [date+amount+description]',
+    });
   }
 }
 
@@ -477,6 +489,106 @@ export class PersistenceService {
     await this.savePreferences({ ...current, ...patch });
   }
 
+  // ── Movements Vault ───────────────────────────────────────────────────────
+
+  /**
+   * Build a composite string key used for duplicate detection.
+   * The key is `date|amount|description` — normalised and lowercased.
+   */
+  private movementKey(date: string, amount: number, description: string): string {
+    return `${date.trim().toLowerCase()}|${amount}|${description.trim().toLowerCase()}`;
+  }
+
+  /**
+   * Given a batch of candidate movements, return the subset whose
+   * `date + amount + description` composite already exists in the vault.
+   * Uses the compound index `[date+amount+description]` for efficiency.
+   */
+  async findDuplicates(
+    movements: Omit<IMovement, 'id'>[],
+  ): Promise<Set<string>> {
+    const duplicateKeys = new Set<string>();
+    if (!movements.length) return duplicateKeys;
+
+    // We query with the compound index; Dexie requires exact value arrays.
+    for (const m of movements) {
+      const count = await this.db.movements
+        .where('[date+amount+description]')
+        .equals([m.date, m.amount, m.description])
+        .count();
+      if (count > 0) {
+        duplicateKeys.add(this.movementKey(m.date, m.amount, m.description));
+      }
+    }
+
+    return duplicateKeys;
+  }
+
+  /**
+   * Persist a batch of reconciled movements to the permanent history,
+   * silently skipping any entry whose `date + amount + description`
+   * composite already exists in the vault.
+   *
+   * Returns `{ saved, skipped }` counts.
+   */
+  async addMovements(
+    movements: Omit<IMovement, 'id'>[],
+  ): Promise<{ saved: number; skipped: number }> {
+    if (!movements.length) return { saved: 0, skipped: 0 };
+
+    const duplicates = await this.findDuplicates(movements);
+    const toInsert = movements.filter(
+      (m) => !duplicates.has(this.movementKey(m.date, m.amount, m.description)),
+    );
+
+    if (toInsert.length) {
+      await this.db.movements.bulkAdd(toInsert as IMovement[]);
+    }
+
+    return { saved: toInsert.length, skipped: duplicates.size };
+  }
+
+  /**
+   * Return all stored movements, ordered by `reconciledAt` descending
+   * (most recently saved first).
+   */
+  async getAllMovements(): Promise<IMovement[]> {
+    const all = await this.db.movements.toArray();
+    return all.sort((a, b) => b.reconciledAt - a.reconciledAt);
+  }
+
+  /**
+   * Return stored movements for a given ISO calendar month.
+   * Both `year` and `month` are 1-based (January = 1).
+   *
+   * Filtering is done in-memory after a full table scan because `date`
+   * is stored as the original bank string (not a normalised ISO date).
+   * For Task 4.3 we may add a normalised `dateISO` index for efficiency.
+   */
+  async getMovementsByMonth(year: number, month: number): Promise<IMovement[]> {
+    const all = await this.db.movements.toArray();
+    const prefix = `${year}-${String(month).padStart(2, '0')}`;
+    return all
+      .filter((m) => m.date.startsWith(prefix))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /**
+   * Delete a single movement record by id.
+   */
+  deleteMovement(id: number): Promise<void> {
+    return this.db.movements.delete(id);
+  }
+
+  /**
+   * Remove all movements from the vault.
+   * Intended for development/testing use only.
+   * @internal
+   */
+  clearMovements(): Promise<void> {
+    return this.db.movements.clear();
+  }
+
   // ── Export / Import ───────────────────────────────────────────────────────
 
   /**
@@ -499,5 +611,144 @@ export class PersistenceService {
       patch.showNegativeAmounts = d['showNegativeAmounts'];
     }
     await this.patchPreferences(patch);
+  }
+
+  // ── Full Database Export / Import ─────────────────────────────────────────
+
+  /**
+   * Export the entire database as a single JSON-serialisable object.
+   * Includes all entities, dialects, movements, and user preferences.
+   */
+  async exportAll(): Promise<{
+    version: number;
+    exportedAt: number;
+    entities: ICanonicalEntity[];
+    dialects: IDialect[];
+    movements: IMovement[];
+    preferences: IUserPreferences;
+  }> {
+    const [entities, dialects, movements, preferences] = await Promise.all([
+      this.getAllEntities(),
+      this.getAllDialects(),
+      this.getAllMovements(),
+      this.getPreferences(),
+    ]);
+    return {
+      version: 1,
+      exportedAt: Date.now(),
+      entities,
+      dialects,
+      movements,
+      preferences,
+    };
+  }
+
+  /**
+   * Import data from a backup JSON object **additively** (never replaces
+   * existing data — only adds new records that are not already present).
+   *
+   * - **Entities**: found-or-created by canonical name (case-insensitive).
+   *   Old `id` values from the backup are remapped to their new local ids.
+   * - **Dialects**: added only when no existing dialect for that entity has
+   *   the same `pattern + scope + sourceField` triple.
+   * - **Movements**: de-duplicated by `date + amount + description` composite
+   *   (delegates to `addMovements` which already handles this).
+   * - **Preferences**: merged (only known keys applied).
+   *
+   * Returns counts of *newly inserted* records for display in the UI.
+   */
+  async importAll(
+    data: unknown,
+  ): Promise<{ entities: number; dialects: number; movements: number }> {
+    if (typeof data !== 'object' || data === null) {
+      throw new Error('Invalid backup format');
+    }
+    const d = data as Record<string, unknown>;
+
+    let importedEntities = 0;
+    let importedDialects = 0;
+
+    // old backup id → new local id (needed to remap dialect.entityId)
+    const entityIdMap = new Map<number, number>();
+
+    // ── 1. Entities ──────────────────────────────────────────────────────────
+    if (Array.isArray(d['entities'])) {
+      for (const e of d['entities'] as ICanonicalEntity[]) {
+        if (!e.name) continue;
+        const existing = await this.getEntityByName(e.name);
+        if (existing) {
+          if (e.id !== undefined) entityIdMap.set(e.id, existing.id!);
+        } else {
+          const created = await this.findOrCreateEntity(e.name);
+          if (e.id !== undefined) entityIdMap.set(e.id, created.id!);
+          importedEntities++;
+        }
+      }
+    }
+
+    // ── 2. Dialects ──────────────────────────────────────────────────────────
+    if (Array.isArray(d['dialects'])) {
+      for (const dial of d['dialects'] as IDialect[]) {
+        if (dial.entityId === undefined) continue;
+        const newEntityId = entityIdMap.get(dial.entityId);
+        if (newEntityId === undefined) continue;
+
+        // Skip if an identical dialect already exists for this entity.
+        const existing = await this.getDialectsForEntity(newEntityId);
+        const isDuplicate = existing.some(
+          (ed) =>
+            ed.pattern === dial.pattern &&
+            ed.scope === dial.scope &&
+            ed.sourceField === dial.sourceField,
+        );
+        if (!isDuplicate) {
+          await this.addDialect({
+            entityId: newEntityId,
+            pattern: dial.pattern,
+            scope: dial.scope,
+            sourceField: dial.sourceField,
+            priority: dial.priority,
+            createdAt: dial.createdAt ?? Date.now(),
+          });
+          importedDialects++;
+        }
+      }
+    }
+
+    // ── 3. Movements ─────────────────────────────────────────────────────────
+    let savedMovements = 0;
+    if (Array.isArray(d['movements'])) {
+      const movements = (d['movements'] as IMovement[]).map((m) => ({
+        date: m.date,
+        description: m.description,
+        amount: m.amount,
+        entity: m.entity,
+        category: m.category,
+        reconciledAt: m.reconciledAt ?? Date.now(),
+      })) as Omit<IMovement, 'id'>[];
+      const result = await this.addMovements(movements);
+      savedMovements = result.saved;
+    }
+
+    // ── 4. Preferences (merge) ────────────────────────────────────────────────
+    if (d['preferences']) {
+      await this.importPreferences(d['preferences']);
+    }
+
+    return { entities: importedEntities, dialects: importedDialects, movements: savedMovements };
+  }
+
+  // ── Destructive Utilities ─────────────────────────────────────────────────
+
+  /**
+   * Remove **all** entities and their associated dialects from the database.
+   * This is the "Clean Memory" operation. Irreversible — confirm with the
+   * user before calling.
+   */
+  async clearEntitiesAndDialects(): Promise<void> {
+    await this.db.transaction('rw', this.db.entities, this.db.dialects, async () => {
+      await this.db.dialects.clear();
+      await this.db.entities.clear();
+    });
   }
 }

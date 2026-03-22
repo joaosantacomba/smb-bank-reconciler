@@ -37,7 +37,7 @@
           </div>
           @if (configApproved) {
             <button (click)="resetConfiguration()" class="bg-white border border-gray-200 text-gray-700 rounded-lg px-4 py-2 text-sm font-medium hover:bg-gray-50 transition-colors">
-              ↺ Reset &amp; Re-upload
+              ↑ Upload New
             </button>
           }
         </div>
@@ -274,36 +274,253 @@
     <!-- TAB 3: MEMORY -->
     @if (activeTab === 'memory') {
       <div class="flex flex-col gap-6">
-        <div>
-          <h2 class="text-xl font-semibold text-gray-900">Rules Memory</h2>
-          <p class="text-sm text-gray-500 mt-0.5">Manage the matching rules used to auto-categorise movements.</p>
+
+        <!-- Header row -->
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-xl font-semibold text-gray-900">Rules Memory</h2>
+            <p class="text-sm text-gray-500 mt-0.5">
+              {{ memoryEntities.length }} entities · {{ totalDialectCount }} patterns
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <!-- Import -->
+            <label class="cursor-pointer bg-white border border-gray-200 text-gray-700 rounded-lg px-4 py-2 text-sm font-medium hover:bg-gray-50 transition-colors">
+              @if (importing) { Importing… } @else { ↑ Import }
+              <input type="file" accept=".json" class="hidden" (change)="onImportFile($event)" [disabled]="importing" />
+            </label>
+            <!-- Clear Memory -->
+            @if (memoryEntities.length) {
+              <button (click)="clearMemory()" class="bg-white border border-red-100 text-red-500 rounded-lg px-4 py-2 text-sm font-medium hover:bg-red-50 transition-colors">
+                🗑 Clear Memory
+              </button>
+            }
+          </div>
         </div>
-        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm text-center py-16">
-          <p class="text-5xl mb-4">🧠</p>
-          <p class="text-gray-400 text-lg mt-4">No rules saved yet</p>
-          <p class="text-gray-400 text-sm mt-1">Rules will appear here as you assign entities in the Mapping tab.</p>
-        </div>
+
+        <!-- Import success banner -->
+        @if (importSummary) {
+          <div class="flex items-center gap-3 bg-green-50 border border-green-100 rounded-xl px-4 py-3 text-sm text-green-700">
+            <span>✓ Import complete —</span>
+            <span><strong>{{ importSummary.entities }}</strong> entities</span>
+            <span>·</span>
+            <span><strong>{{ importSummary.dialects }}</strong> patterns</span>
+            <span>·</span>
+            <span><strong>{{ importSummary.movements }}</strong> movements</span>
+          </div>
+        }
+
+        @if (!memoryEntities.length) {
+          <div class="bg-white border border-gray-100 rounded-2xl shadow-sm text-center py-16">
+            <p class="text-5xl mb-4">🧠</p>
+            <p class="text-gray-400 text-lg mt-4">No rules saved yet</p>
+            <p class="text-gray-400 text-sm mt-1">Rules will appear here as you assign entities in the Mapping tab.</p>
+          </div>
+        } @else {
+
+          <!-- Search -->
+          <div class="relative">
+            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+            <input type="text" placeholder="Search entities or patterns…"
+              class="w-full bg-white border border-gray-100 rounded-xl pl-10 pr-4 py-3 text-sm text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+              [value]="memorySearchQuery" (input)="onMemorySearch($event)" />
+          </div>
+
+          <!-- Entity list -->
+          <div class="flex flex-col gap-3">
+            @for (entity of filteredMemoryEntities; track entity.id) {
+              <div class="bg-white border border-gray-100 rounded-2xl shadow-sm px-5 py-4">
+
+                <!-- Entity name + actions -->
+                <div class="flex items-center justify-between gap-3 mb-3">
+                  @if (editingEntityId === entity.id) {
+                    <input type="text" class="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:ring-2 focus:ring-gray-200"
+                      [value]="editingEntityName"
+                      #renameInput
+                      (keydown.enter)="commitRenameEntity(entity.id!, renameInput.value)"
+                      (keydown.escape)="cancelEditEntity()"
+                      (blur)="commitRenameEntity(entity.id!, renameInput.value)" />
+                    <button (click)="cancelEditEntity()" class="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                  } @else {
+                    <span class="font-semibold text-gray-900 text-sm">{{ entity.name }}</span>
+                    <div class="flex items-center gap-2">
+                      <button (click)="startEditEntity(entity)" class="text-xs text-gray-400 hover:text-gray-700 transition-colors">✎ Rename</button>
+                      <button (click)="onDeleteEntity(entity.id!)" class="text-xs text-red-400 hover:text-red-600 transition-colors">🗑 Delete</button>
+                    </div>
+                  }
+                </div>
+
+                <!-- Dialects -->
+                <div class="flex flex-wrap gap-2">
+                  @for (dialect of entity.dialects; track dialect.id) {
+                    <div class="flex items-center gap-1 pl-3 pr-1 py-1 rounded-full text-xs font-medium border transition-colors"
+                      [class.bg-blue-50]="dialect.scope === 'exact'"
+                      [class.border-blue-100]="dialect.scope === 'exact'"
+                      [class.text-blue-700]="dialect.scope === 'exact'"
+                      [class.bg-purple-50]="dialect.scope === 'structural'"
+                      [class.border-purple-100]="dialect.scope === 'structural'"
+                      [class.text-purple-700]="dialect.scope === 'structural'">
+                      <span>{{ dialect.pattern }}</span>
+                      <span class="opacity-50 ml-1">{{ dialect.scope }}</span>
+                      <button (click)="onDeleteDialect(dialect.id!)"
+                        class="ml-1 w-4 h-4 rounded-full flex items-center justify-center hover:bg-red-100 hover:text-red-500 text-gray-400 transition-colors">✕</button>
+                    </div>
+                  }
+                  @if (!entity.dialects.length) {
+                    <span class="text-xs text-gray-300">No patterns yet</span>
+                  }
+                </div>
+
+              </div>
+            }
+          </div>
+
+        }
       </div>
     }
 
     <!-- TAB 4: HISTORY -->
     @if (activeTab === 'history') {
       <div class="flex flex-col gap-6">
-        <div>
-          <h2 class="text-xl font-semibold text-gray-900">Monthly History</h2>
-          <p class="text-sm text-gray-500 mt-0.5">View all processed movements organised by month.</p>
+        <div class="flex items-start justify-between">
+          <div>
+            <h2 class="text-xl font-semibold text-gray-900">History</h2>
+            <p class="text-sm text-gray-500 mt-0.5">All movements saved to the permanent vault.</p>
+          </div>
+          @if (historyMovements.length) {
+            <span class="px-3 py-1 rounded-full bg-white border border-gray-100 text-gray-500 text-sm font-medium shadow-sm">
+              {{ historyMovements.length }} movement{{ historyMovements.length === 1 ? '' : 's' }} total
+            </span>
+          }
         </div>
-        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm text-center py-16">
-          <p class="text-5xl mb-4">📅</p>
-          <p class="text-gray-400 text-lg mt-4">No history yet</p>
-          <p class="text-gray-400 text-sm mt-1">Processed movements will appear here after you commit mappings.</p>
-        </div>
+
+        @if (historyMovements.length) {
+          <button (click)="clearHistory()" class="bg-white border border-red-100 text-red-500 rounded-lg px-4 py-2 text-sm font-medium hover:bg-red-50 transition-colors">
+            🗑 Clear History
+          </button>
+        }
+
+        @if (!historyMovements.length) {
+          <div class="bg-white border border-gray-100 rounded-2xl shadow-sm text-center py-16">
+            <p class="text-5xl mb-4">📅</p>
+            <p class="text-gray-400 text-lg mt-4">No history yet</p>
+            <p class="text-gray-400 text-sm mt-1">Label movements in the Mapping tab and click <strong>Save to History</strong>.</p>
+          </div>
+        } @else {
+
+          <!-- Search bar -->
+          <div class="relative">
+            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+            <input
+              type="text"
+              placeholder="Search by description, entity or amount…"
+              class="w-full bg-white border border-gray-100 rounded-xl pl-10 pr-4 py-3 text-sm text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+              [value]="historySearchQuery"
+              (input)="onHistorySearch($event)"
+            />
+          </div>
+
+          <!-- Monthly browser -->
+          @if (availableMonths.length) {
+            <div class="flex flex-wrap gap-2 items-center">
+              @for (month of availableMonths; track month) {
+                <button
+                  (click)="selectHistoryMonth(month)"
+                  [class]="historySelectedMonth === month
+                    ? 'px-4 py-1.5 rounded-full text-sm font-medium bg-gray-900 text-white transition-colors'
+                    : 'px-4 py-1.5 rounded-full text-sm font-medium bg-white border border-gray-100 text-gray-500 hover:border-gray-300 transition-colors shadow-sm'"
+                >{{ formatMonthLabel(month) }}</button>
+              }
+            </div>
+          }
+
+          <!-- Results summary -->
+          <div class="flex items-center justify-between text-sm text-gray-500">
+            <span>
+              <strong>{{ filteredHistoryMovements.length }}</strong>
+              movement{{ filteredHistoryMovements.length === 1 ? '' : 's' }}
+              @if (historySearchQuery.trim()) {
+                matching <em>"{{ historySearchQuery.trim() }}"</em>
+              }
+            </span>
+            <span class="font-mono font-medium" [class.text-green-600]="filteredHistoryTotal >= 0" [class.text-red-500]="filteredHistoryTotal < 0">
+              Σ {{ filteredHistoryTotal | number:'1.2-2' }}
+            </span>
+          </div>
+
+          @if (!filteredHistoryMovements.length) {
+            <div class="bg-white border border-gray-100 rounded-2xl shadow-sm text-center py-12">
+              <p class="text-4xl mb-3">🔍</p>
+              <p class="text-gray-400 text-lg mt-2">No results</p>
+              <p class="text-gray-400 text-sm mt-1">Try adjusting your search or month filter.</p>
+            </div>
+          } @else {
+            <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+              <div class="overflow-auto max-h-[520px]">
+                <table class="min-w-full text-sm border-collapse">
+                  <thead class="sticky top-0 z-20 bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">Date</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Description</th>
+                      <th class="px-4 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">Amount</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Entity</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">Saved at</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (mov of filteredHistoryMovements; track mov.id) {
+                      <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                        <td class="py-4 px-4 text-sm text-gray-700 whitespace-nowrap">{{ mov.date }}</td>
+                        <td class="py-4 px-4 text-sm text-gray-700">{{ mov.description }}</td>
+                        <td class="py-4 px-4 text-sm font-mono whitespace-nowrap text-right"
+                          [class.text-green-600]="mov.amount >= 0"
+                          [class.text-red-500]="mov.amount < 0">{{ mov.amount | number:'1.2-2' }}</td>
+                        <td class="py-4 px-4">
+                          <span class="inline-block px-2 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-medium">{{ mov.entity }}</span>
+                        </td>
+                        <td class="py-4 px-4 text-xs text-gray-400 whitespace-nowrap">{{ mov.reconciledAt | date:'dd/MM/yy HH:mm' }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          }
+        }
       </div>
     }
 
   </main>
 
-  <!-- Floating Action Bar -->
+  <!-- Floating Action Bar: Save to History (Mapping tab) -->
+  @if (activeTab === 'mapping' && matchingRows.length) {
+    <div class="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
+      @if (lastSaveSummary) {
+        <span class="px-4 py-2.5 rounded-full bg-green-50 text-green-700 text-sm font-medium border border-green-100">
+          ✓ {{ lastSaveSummary.saved }} movement{{ lastSaveSummary.saved === 1 ? '' : 's' }} saved
+          @if (lastSaveSummary.skipped) {
+            · <span class="text-orange-600">{{ lastSaveSummary.skipped }} duplicate{{ lastSaveSummary.skipped === 1 ? '' : 's' }} skipped</span>
+          }
+        </span>
+      }
+      @if (!labeledRowCount) {
+        <p class="text-sm text-gray-400">Label at least one movement to save to history.</p>
+      } @else {
+        <p class="text-sm text-gray-500">
+          <strong>{{ labeledRowCount }}</strong> of <strong>{{ matchingRows.length }}</strong> movements labeled
+        </p>
+      }
+      <button
+        (click)="saveToHistory()"
+        [disabled]="!labeledRowCount || savingToHistory"
+        class="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        @if (savingToHistory) { Saving… } @else { 💾 Save to History }
+      </button>
+    </div>
+  }
+
+  <!-- Floating Action Bar: Approve Configuration (Upload tab) -->
   @if (activeTab === 'upload' && parsedSheet) {
     <div class="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
       @if (configApproved) {

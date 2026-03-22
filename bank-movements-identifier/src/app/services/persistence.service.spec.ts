@@ -824,6 +824,208 @@ describe('PersistenceService', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Movements Vault
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe('Movements Vault', () => {
+    const makeMovement = (overrides: Partial<import('../models/movement.model').IMovement> = {}): Omit<import('../models/movement.model').IMovement, 'id'> => ({
+      date: '2024-03-15',
+      description: 'CONTINENTE MODELO',
+      amount: -42.5,
+      entity: 'Continente',
+      reconciledAt: Date.now(),
+      ...overrides,
+    });
+
+    it('addMovements should persist a batch and getAllMovements should return them', async () => {
+      await service.addMovements([makeMovement(), makeMovement({ entity: 'Netflix', amount: -14.99 })]);
+      const all = await service.getAllMovements();
+      expect(all).toHaveLength(2);
+    });
+
+    it('getAllMovements should return movements ordered by reconciledAt descending', async () => {
+      const t1 = Date.now();
+      const t2 = t1 + 1000;
+      await service.addMovements([
+        makeMovement({ reconciledAt: t1, entity: 'First' }),
+        makeMovement({ reconciledAt: t2, entity: 'Second' }),
+      ]);
+      const all = await service.getAllMovements();
+      expect(all[0].entity).toBe('Second');
+      expect(all[1].entity).toBe('First');
+    });
+
+    it('addMovements should assign auto-incremented ids', async () => {
+      await service.addMovements([makeMovement(), makeMovement()]);
+      const all = await service.getAllMovements();
+      expect(all[0].id).toBeDefined();
+      expect(all[1].id).toBeDefined();
+      expect(all[0].id).not.toBe(all[1].id);
+    });
+
+    it('getAllMovements should return empty array when vault is empty', async () => {
+      const all = await service.getAllMovements();
+      expect(all).toHaveLength(0);
+    });
+
+    it('deleteMovement should remove only the specified record', async () => {
+      await service.addMovements([
+        makeMovement({ entity: 'ToDelete' }),
+        makeMovement({ entity: 'ToKeep' }),
+      ]);
+      const all = await service.getAllMovements();
+      const target = all.find((m) => m.entity === 'ToDelete')!;
+      await service.deleteMovement(target.id!);
+      const remaining = await service.getAllMovements();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].entity).toBe('ToKeep');
+    });
+
+    it('clearMovements should remove all records', async () => {
+      await service.addMovements([makeMovement(), makeMovement()]);
+      await service.clearMovements();
+      const all = await service.getAllMovements();
+      expect(all).toHaveLength(0);
+    });
+
+    it('getMovementsByMonth should return only movements for the given month', async () => {
+      await service.addMovements([
+        makeMovement({ date: '2024-03-01', entity: 'March1' }),
+        makeMovement({ date: '2024-03-31', entity: 'March2' }),
+        makeMovement({ date: '2024-04-01', entity: 'April1' }),
+        makeMovement({ date: '2024-02-28', entity: 'Feb1' }),
+      ]);
+
+      const march = await service.getMovementsByMonth(2024, 3);
+      expect(march).toHaveLength(2);
+      expect(march.map((m) => m.entity).sort()).toEqual(['March1', 'March2']);
+    });
+
+    it('getMovementsByMonth should return movements sorted by date ascending', async () => {
+      await service.addMovements([
+        makeMovement({ date: '2024-03-20', entity: 'Late' }),
+        makeMovement({ date: '2024-03-05', entity: 'Early' }),
+      ]);
+      const march = await service.getMovementsByMonth(2024, 3);
+      expect(march[0].entity).toBe('Early');
+      expect(march[1].entity).toBe('Late');
+    });
+
+    it('getMovementsByMonth should return empty array when no movements exist for that month', async () => {
+      await service.addMovements([makeMovement({ date: '2024-01-15', entity: 'January' })]);
+      const march = await service.getMovementsByMonth(2024, 3);
+      expect(march).toHaveLength(0);
+    });
+
+    it('addMovements should persist optional category field', async () => {
+      await service.addMovements([makeMovement({ category: 'Groceries' })]);
+      const all = await service.getAllMovements();
+      expect(all[0].category).toBe('Groceries');
+    });
+
+    it('addMovements should return { saved, skipped } counts', async () => {
+      const result = await service.addMovements([makeMovement(), makeMovement({ entity: 'Netflix' })]);
+      expect(result.saved).toBe(2);
+      expect(result.skipped).toBe(0);
+    });
+
+    it('addMovements should return { saved: 0, skipped: 0 } for an empty batch', async () => {
+      const result = await service.addMovements([]);
+      expect(result.saved).toBe(0);
+      expect(result.skipped).toBe(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Duplicate Protection (Task 4.2)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe('Duplicate Protection', () => {
+    const makeMovement = (overrides: Partial<import('../models/movement.model').IMovement> = {}): Omit<import('../models/movement.model').IMovement, 'id'> => ({
+      date: '2024-03-15',
+      description: 'CONTINENTE MODELO',
+      amount: -42.5,
+      entity: 'Continente',
+      reconciledAt: Date.now(),
+      ...overrides,
+    });
+
+    it('findDuplicates returns empty set when vault is empty', async () => {
+      const dupes = await service.findDuplicates([makeMovement()]);
+      expect(dupes.size).toBe(0);
+    });
+
+    it('findDuplicates returns a key for an exact duplicate', async () => {
+      const m = makeMovement();
+      await service.addMovements([m]);
+      const dupes = await service.findDuplicates([m]);
+      expect(dupes.size).toBe(1);
+    });
+
+    it('findDuplicates does not flag movements with different amounts', async () => {
+      await service.addMovements([makeMovement({ amount: -10 })]);
+      const dupes = await service.findDuplicates([makeMovement({ amount: -20 })]);
+      expect(dupes.size).toBe(0);
+    });
+
+    it('findDuplicates does not flag movements with different dates', async () => {
+      await service.addMovements([makeMovement({ date: '2024-03-01' })]);
+      const dupes = await service.findDuplicates([makeMovement({ date: '2024-03-02' })]);
+      expect(dupes.size).toBe(0);
+    });
+
+    it('findDuplicates does not flag movements with different descriptions', async () => {
+      await service.addMovements([makeMovement({ description: 'CONTINENTE A' })]);
+      const dupes = await service.findDuplicates([makeMovement({ description: 'CONTINENTE B' })]);
+      expect(dupes.size).toBe(0);
+    });
+
+    it('addMovements skips duplicates and reports correct saved/skipped counts', async () => {
+      const m = makeMovement();
+      await service.addMovements([m]);
+
+      // Save the same movement a second time
+      const result = await service.addMovements([m]);
+      expect(result.saved).toBe(0);
+      expect(result.skipped).toBe(1);
+
+      // Vault should still have only 1 record
+      const all = await service.getAllMovements();
+      expect(all).toHaveLength(1);
+    });
+
+    it('addMovements only skips duplicates; new movements are still saved', async () => {
+      const existing = makeMovement({ entity: 'Existing' });
+      await service.addMovements([existing]);
+
+      const newOne = makeMovement({ date: '2024-04-01', entity: 'New' });
+      const result = await service.addMovements([existing, newOne]);
+
+      expect(result.saved).toBe(1);
+      expect(result.skipped).toBe(1);
+
+      const all = await service.getAllMovements();
+      expect(all).toHaveLength(2);
+      expect(all.map((m) => m.entity).sort()).toEqual(['Existing', 'New']);
+    });
+
+    it('saving an entire batch a second time skips all entries', async () => {
+      const batch = [
+        makeMovement({ entity: 'A', date: '2024-01-01', amount: -10 }),
+        makeMovement({ entity: 'B', date: '2024-01-02', amount: -20 }),
+      ];
+      await service.addMovements(batch);
+
+      const result = await service.addMovements(batch);
+      expect(result.saved).toBe(0);
+      expect(result.skipped).toBe(2);
+
+      const all = await service.getAllMovements();
+      expect(all).toHaveLength(2);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // User Preferences
   // ═══════════════════════════════════════════════════════════════════════════
 
