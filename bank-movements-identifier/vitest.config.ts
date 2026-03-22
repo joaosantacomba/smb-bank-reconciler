@@ -1,13 +1,13 @@
-import { defineConfig } from 'vite';
-import tailwindcss from '@tailwindcss/vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [
-    tailwindcss(),
-  ],
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/app/services/**/*.spec.ts', 'src/app/models/**/*.spec.ts'],
+    include: [
+      'src/app/services/**/*.spec.ts',
+      'src/app/models/**/*.spec.ts',
+      'src/app/utils/**/*.spec.ts',
+    ],
   },
 });

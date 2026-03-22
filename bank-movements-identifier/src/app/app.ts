@@ -1,8 +1,10 @@
 import { ChangeDetectorRef, Component, OnInit } from '@angular/core';
-import { NgClass } from '@angular/common';
+import { DecimalPipe, NgClass } from '@angular/common';
 import { ExcelParserService } from './services/excel-parser.service';
 import { ParsedSheet } from './models/parsed-sheet.model';
 import { PersistenceService } from './services/persistence.service';
+import { MovementTokenizerService } from './services/movement-tokenizer.service';
+import { MatchLevel } from './models/match-evidence.model';
 
 export type ColumnRole = 'date' | 'description' | 'amount';
 export type TabId = 'upload' | 'mapping' | 'memory' | 'history';
@@ -27,12 +29,16 @@ export interface MatchRow {
   amount: string;
   label: string;
   source: 'auto' | 'manual' | '';
+  /** The match level when source === 'auto': 'exact', 'structural', or 'similarity'. */
+  matchLevel?: MatchLevel;
+  /** Confidence score [0,1]. Only meaningful for similarity matches. */
+  matchScore?: number;
 }
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [NgClass],
+  imports: [NgClass, DecimalPipe],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -73,7 +79,10 @@ export class AppComponent implements OnInit {
     this.parsedSheet = null;
     this.rowOverrides = new Map();
     this.columnMapping = {};
-    this.matchLabels = new Map();
+    this.matchLabels = new Map<
+      number,
+      { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
+    >();
     this.dragging = false;
   }
 
@@ -92,8 +101,11 @@ export class AppComponent implements OnInit {
   /** column index → assigned role */
   columnMapping: Record<number, ColumnRole | ''> = {};
 
-  /** rawIndex → { label, source } for the matching view */
-  matchLabels = new Map<number, { label: string; source: 'auto' | 'manual' | '' }>();
+  /** rawIndex → { label, source, matchLevel, matchScore } for the matching view */
+  matchLabels = new Map<
+    number,
+    { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
+  >();
 
   // ── User Preferences ──────────────────────────────────────────────────────
 
@@ -103,6 +115,7 @@ export class AppComponent implements OnInit {
   constructor(
     private excelParser: ExcelParserService,
     private persistence: PersistenceService,
+    private tokenizer: MovementTokenizerService,
     private cdr: ChangeDetectorRef,
   ) {}
 
@@ -309,15 +322,33 @@ export class AppComponent implements OnInit {
     return record;
   }
 
+  /**
+   * Build a map of sourceField → searchKey for all description columns in
+   * the given row. Used for structural (pattern-based) matching.
+   */
+  private buildSearchKeyRecord(rawDescriptions: Record<string, string>): Record<string, string> {
+    const keys: Record<string, string> = {};
+    for (const [field, value] of Object.entries(rawDescriptions)) {
+      keys[field] = this.tokenizer.generateSearchKey(value);
+    }
+    return keys;
+  }
+
   private async autoMatchRows(): Promise<void> {
     const movements = this.tableRows.filter((r) => r.type === 'movement');
-    const newLabels = new Map<number, { label: string; source: 'auto' | 'manual' | '' }>();
+    const newLabels = new Map<
+      number,
+      { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
+    >();
     for (const r of movements) {
       const descRecord = this.buildDescriptionRecord(r.row);
-      const match = await this.persistence.findMatchingRule(descRecord);
+      const searchKeys = this.buildSearchKeyRecord(descRecord);
+      const match = await this.persistence.findMatchingEntity(descRecord, searchKeys);
       newLabels.set(r.rawIndex, {
-        label: match?.targetLabel ?? '',
+        label: match?.entity.name ?? '',
         source: match ? 'auto' : '',
+        matchLevel: match?.level,
+        matchScore: match?.score,
       });
     }
     this.matchLabels = newLabels;
@@ -333,18 +364,41 @@ export class AppComponent implements OnInit {
     const rowDisplay = this.tableRows.find((r) => r.rawIndex === rawIndex);
     if (!rowDisplay || !this.parsedSheet) return;
 
-    const firstDescEntry = Object.entries(this.columnMapping).find(([, r]) => r === 'description');
-    if (!firstDescEntry) return;
-    const descColIdx = Number(firstDescEntry[0]);
-    const headerName = this.parsedSheet.headers[descColIdx];
-    const cellValue = String(rowDisplay.row[descColIdx] ?? '').trim();
-    if (!cellValue) return;
+    // Find or create the canonical entity for the typed label
+    const entity = await this.persistence.findOrCreateEntity(trimmed);
+    const now = Date.now();
 
-    await this.persistence.addRule({
-      conditions: [{ field: headerName, value: cellValue }],
-      targetLabel: trimmed,
-      priority: 0,
-    });
+    // Persist a dialect for every mapped description column
+    for (const [colIdxStr, role] of Object.entries(this.columnMapping)) {
+      if (role !== 'description') continue;
+      const colIdx = Number(colIdxStr);
+      const headerName = this.parsedSheet.headers[colIdx];
+      const cellValue = String(rowDisplay.row[colIdx] ?? '').trim();
+      if (!cellValue) continue;
+
+      // ── Exact dialect ───────────────────────────────────────────────────
+      await this.persistence.addDialect({
+        entityId: entity.id!,
+        pattern: cellValue,
+        scope: 'exact',
+        sourceField: headerName,
+        priority: 1,
+        createdAt: now,
+      });
+
+      // ── Structural dialect ──────────────────────────────────────────────
+      const searchKey = this.tokenizer.generateSearchKey(cellValue);
+      if (searchKey && searchKey !== cellValue.toLowerCase()) {
+        await this.persistence.addDialect({
+          entityId: entity.id!,
+          pattern: searchKey,
+          scope: 'structural',
+          sourceField: headerName,
+          priority: 1,
+          createdAt: now,
+        });
+      }
+    }
   }
 
   get matchingRows(): MatchRow[] {
@@ -371,6 +425,8 @@ export class AppComponent implements OnInit {
           amount: String(r.row[amountColIdx] ?? ''),
           label: entry.label,
           source: entry.source,
+          matchLevel: entry.matchLevel,
+          matchScore: entry.matchScore,
         };
       });
 

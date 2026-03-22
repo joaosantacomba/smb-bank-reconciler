@@ -34,16 +34,54 @@
     - [x] **Approval Gate:** Implement the "Approve Configuration" button to unlock subsequent tabs only after header/column validation.
     - [x] **UI Migration:** Refactor existing views to follow the `design-system.md` (cards, buttons, and neutral palette).
     - [x] **Empty States:** Implement centered empty state messages for all tabs.
-- [ ] **Task 2.4: Persistence Management & Portability**
-    - [ ] **Memory Tab:** Create CRUD interface for the Rules Dictionary (view/delete specific rules).
-    - [ ] **Export/Import:** Implement JSON backup/restore for both Rules and History stores.
-    - [ ] **Monthly History:** Implement the historical reporting view grouped by month.
+- [ ] **Task 2.4: Smart Matching & Entity Normalization**
+    - [ ] **Description Normalizer:** Logic to strip noise (dates like `01/03`, transaction IDs, and extra spaces) from bank strings.
+    - [ ] **Fuzzy Matching (Levenshtein):** Implement similarity scoring for non-exact matches. 
+        - Formula: $S(A, B) = 1 - \frac{\text{dist\_levenshtein}(A, B)}{\max(|A|, |B|)}$
+    - [ ] **Entity Autocomplete:** Suggest existing entities during manual input to prevent duplicates (e.g., "Continente" vs "Continente S.A.").
+    - [ ] **Fuzzy Badge UI:** New `? Maybe` (orange) state for matches with $>80\%$ confidence.
+## Phase 3: Intelligent Matching & Pattern Recognition
+**Objective:** Transition from static string matching to a dynamic pattern-recognition engine that learns "dialects" and preserves data integrity.
 
-## Phase 3: Advanced Matching & Usability
-- [ ] Advanced fuzzy matching (Levenshtein distance).
-- [ ] Bulk actions (Apply rule to all similar rows).
-- [ ] Final Export of reconciled data to CSV/Excel.
+- [x] **Task 3.1: Description Anatomy & Tokenization**
+    - [x] Implement a `MovementTokenizerService` to decompose bank strings into `Anchors` (static text) and `Variables` (dates, sequential IDs, timestamps).
+    - [x] Ensure the process is non-destructive: the `originalDescription` must remain intact for future auditing/invoicing.
+    - [x] Create a "Search Key" generator that extracts stable patterns to be used for matching lookups.
 
-## Phase 4: Automation & Integrations
-- [ ] Local Machine Learning for smarter categorization suggestions.
-- [ ] Offline capabilities (PWA setup).
+- [x] **Task 3.2: Rule Hierarchy & Canonical Entities**
+    - [x] Refactor `PersistenceService` to support multiple "Dialects" (source patterns) pointing to a single "Canonical Entity" (e.g., different bank strings all mapping to entity "Continente").
+    - [x] Implement rule scoping: allow patterns to be generic or specific to certain recurring structures.
+
+- [x] **Task 3.3: Multi-Level Matching Pipeline**
+    - [x] Implement the three-tier matching logic:
+        - **Level 1 (Exact):** Direct match using the `originalDescription`.
+        - **Level 2 (Structural):** Match based on `Anchors` and `SearchKey` (ignores dates/IDs).
+        - **Level 3 (Similarity):** Levenshtein-based matching for normalized strings (0.8).
+    - [x] Logic must return the specific "Evidence" (which historical rule or tokens triggered the match).
+
+- [ ] **Task 3.4: Adaptive Pattern Learning**
+    - [ ] **Rule Evolution:** When a user approves a `? suggested` match, the system must update the existing pattern in IndexedDB to incorporate the new variation (merging tokens).
+    - [ ] **Conflict Management:** If a pattern could match multiple entities, flag it for manual review instead of auto-matching.
+
+- [ ] **Task 3.5: Transparency & Evidence UI**
+    - [ ] **Status Badges:** Implement `✓ auto` (Green/Exact/Structural) and `? suggested` (Orange/Similarity) labels.
+    - [ ] **Visual Highlighting:** Use the tokenizer metadata to highlight "Anchors" directly in the table row (bold or underlined).
+    - [ ] **Evidence Modal:** - Add a "Details" button to every matched row.
+        - Open a central modal showing the current movement side-by-side with the **top 3 historical matches** for that entity.
+    - [ ] **Smart Autocomplete:** When typing an entity, prioritize names that have already been matched
+
+## Phase 4: Historical Insights & Portability
+- [ ] **Task 4.1: Memory Management Tab**
+    - [ ] CRUD interface for the Rules Dictionary (Edit/Delete learned patterns).
+- [ ] **Task 4.2: Monthly History & Reporting**
+    - [ ] Grouped view of reconciled movements by month/category.
+- [ ] **Task 4.3: Data Portability**
+    - [ ] JSON Export/Import for Rules and History (Backup/Privacy control).
+
+## Phase 5: Automation & Final Polish
+- [ ] **Task 5.1: Bulk Actions**
+    - [ ] "Apply this entity to all similar rows" in one click.
+- [ ] **Task 5.2: Final Export**
+    - [ ] Export reconciled data to cleaned CSV/Excel.
+- [ ] **Task 5.3: Offline/PWA**
+    - [ ] Service Worker setup for full offline use.

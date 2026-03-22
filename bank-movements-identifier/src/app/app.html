@@ -247,7 +247,12 @@
                         />
                       </td>
                       <td class="py-4 px-4 whitespace-nowrap">
-                        @if (mRow.source === 'auto') {
+                        @if (mRow.source === 'auto' && mRow.matchLevel === 'similarity') {
+                          <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-600"
+                            [title]="'Similarity match — confidence: ' + ((mRow.matchScore ?? 0) * 100 | number:'1.0-0') + '%'">
+                            ? suggested {{ (mRow.matchScore ?? 0) * 100 | number:'1.0-0' }}%
+                          </span>
+                        } @else if (mRow.source === 'auto') {
                           <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-600">✓ auto</span>
                         } @else if (mRow.source === 'manual') {
                           <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">✎ manual</span>
