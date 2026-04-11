@@ -84,7 +84,16 @@
 - [x] **Task 4.5: Data Portability & Safety**
     - [x] **Import:** Upload a previously exported JSON backup — additive merge (entities/dialects/movements). Summary banner on completion.
     - [x] **Clean History:** Destructive "Clear History" button on the History tab with confirmation guard.
-    - [ ] **Export:** Me
+    - [ ] **Export:** Download the entire database (Rules + Movements) as a JSON file for backup and portability.
+
+- [x] **Task 4.6: Ambiguity & Manual Discovery (Clear to Learn)**
+    - [x] **Non-Unique Indexing:** `findAllMatchingEntities` collects all matching entities per pattern across all three tiers; existing schema already supports multiple entityIds per pattern.
+    - [x] **Clear Match Action:** `[✕]` button on matched rows (auto, manual, ambiguous) clears the entity and resets to unknown state.
+    - [x] **Additive Learning:** `dialectExists` guard prevents duplicate dialect entries; new entity associations are always added alongside existing ones (never overwrite).
+    - [x] **Ambiguity State:** When > 1 entity matches, status is `⚠ Ambiguous`; clicking the field shows a candidate dropdown with match level badges and a manual-entry fallback.
+- [ ] **Task 4.7: History Audit & Maintenance**
+    - [ ] **Reprocess Button:** Identify historical rows that no longer align with the current rule library. Add Red ball in the tabs with number of rows with outdated matches so the user can see what months have issues (similar design as Iphone cards)
+    - [ ] **Update Match Button:** Allow user to update past records to match newly learned/refined rules. This is done row by row    
 
 ## Phase 5: Automation & Final Polish
 - [ ] **Task 5.1: Bulk Actions** (Apply entity to all similar rows in one click).

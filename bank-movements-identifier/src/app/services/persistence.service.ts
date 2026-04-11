@@ -241,11 +241,14 @@ export class PersistenceService {
   // ── Matching ──────────────────────────────────────────────────────────────
 
   /**
-   * Run the three-tier matching pipeline against the provided description
-   * values and return the best `MatchEvidence`, or `undefined` if no match
-   * meets the required confidence.
+   * Run the three-tier matching pipeline and return **all** matching entities,
+   * one `MatchEvidence` per unique canonical entity (best match per entity).
    *
-   * ### Pipeline tiers (evaluated in order — first match wins)
+   * Results are sorted by tier priority (exact > structural > similarity) and
+   * then by score descending. This powers the ambiguity-detection logic: when
+   * the returned array contains more than one entry, the pattern is ambiguous.
+   *
+   * ### Pipeline tiers (all evaluated — not first-match-wins)
    *
    * **Level 1 — Exact**
    * Each `exact`-scoped dialect's `pattern` is compared verbatim
@@ -259,24 +262,46 @@ export class PersistenceService {
    *
    * **Level 3 — Similarity (Levenshtein)**
    * All dialects (both scopes) are tested using normalised Levenshtein
-   * similarity. Inputs are stripped of dates/IDs before comparison.
-   * Only matches with a score ≥ `similarityThreshold` (default `0.8`) are
-   * considered. The highest-scoring dialect wins within this tier.
-   * Skipped when `enableSimilarity` is `false`.
-   *
-   * `rawDescriptions` and `searchKeys` are maps of `sourceField → value`.
+   * similarity. Only matches with a score ≥ `similarityThreshold` (default
+   * `0.8`) are considered.
+   * Skipped when a given entity already has a higher-tier match.
    *
    * @param rawDescriptions  Map of column header → raw bank description value.
    * @param searchKeys       Map of column header → tokenised search key.
    * @param similarityThreshold  Minimum Levenshtein similarity score (0–1).
    *                             Defaults to `0.8`.
    */
-  async findMatchingEntity(
+  async findAllMatchingEntities(
     rawDescriptions: Record<string, string>,
     searchKeys?: Record<string, string>,
     similarityThreshold = 0.8,
-  ): Promise<MatchEvidence | undefined> {
+  ): Promise<MatchEvidence[]> {
     const allDialects = await this.getAllDialects(); // sorted by priority desc
+
+    // Best evidence per entity id — we keep at most one MatchEvidence per entity,
+    // preferring: exact > structural > similarity, then higher score.
+    const bestPerEntity = new Map<number, MatchEvidence>();
+
+    const tierRank: Record<MatchEvidence['level'], number> = {
+      exact: 2,
+      structural: 1,
+      similarity: 0,
+    };
+
+    const isBetter = (candidate: MatchEvidence, existing: MatchEvidence): boolean => {
+      const cr = tierRank[candidate.level];
+      const er = tierRank[existing.level];
+      if (cr !== er) return cr > er;
+      return candidate.score > existing.score;
+    };
+
+    const maybeStore = (evidence: MatchEvidence): void => {
+      const entityId = evidence.entity.id!;
+      const existing = bestPerEntity.get(entityId);
+      if (!existing || isBetter(evidence, existing)) {
+        bestPerEntity.set(entityId, evidence);
+      }
+    };
 
     // ── Level 1: Exact matching ───────────────────────────────────────────────
     for (const dialect of allDialects) {
@@ -286,14 +311,14 @@ export class PersistenceService {
       if (rawValue === dialect.pattern.trim().toLowerCase()) {
         const entity = await this.db.entities.get(dialect.entityId);
         if (entity) {
-          return {
+          maybeStore({
             entity,
             dialect,
             level: 'exact',
             score: 1,
             inputValue: rawDescriptions[dialect.sourceField] ?? '',
             matchedPattern: dialect.pattern,
-          };
+          });
         }
       }
     }
@@ -307,60 +332,111 @@ export class PersistenceService {
         if (searchKey === dialect.pattern.trim().toLowerCase()) {
           const entity = await this.db.entities.get(dialect.entityId);
           if (entity) {
-            return {
+            maybeStore({
               entity,
               dialect,
               level: 'structural',
               score: 1,
               inputValue: searchKeys[dialect.sourceField] ?? '',
               matchedPattern: dialect.pattern,
-            };
+            });
           }
         }
       }
     }
 
     // ── Level 3: Similarity matching (Levenshtein) ───────────────────────────
-    // Collect all candidate inputs (raw descriptions only — normalised).
     const normalisedInputs: Record<string, string> = {};
     for (const [field, value] of Object.entries(rawDescriptions)) {
       normalisedInputs[field] = normalizeForSimilarity(value);
     }
 
-    let bestScore = -1;
-    let bestDialect: IDialect | null = null;
-    let bestInputValue = '';
+    // Build: entityId → best similarity evidence for that entity so far
+    const simBestPerEntity = new Map<
+      number,
+      { score: number; dialect: IDialect; inputValue: string }
+    >();
 
     for (const dialect of allDialects) {
       const normalisedInput = normalisedInputs[dialect.sourceField];
       if (!normalisedInput) continue;
-
       const normalisedPattern = normalizeForSimilarity(dialect.pattern);
       if (!normalisedPattern) continue;
 
       const score = levenshteinSimilarity(normalisedInput, normalisedPattern);
-      if (score >= similarityThreshold && score > bestScore) {
-        bestScore = score;
-        bestDialect = dialect;
-        bestInputValue = rawDescriptions[dialect.sourceField] ?? '';
+      if (score < similarityThreshold) continue;
+
+      const existing = simBestPerEntity.get(dialect.entityId);
+      if (!existing || score > existing.score) {
+        simBestPerEntity.set(dialect.entityId, {
+          score,
+          dialect,
+          inputValue: rawDescriptions[dialect.sourceField] ?? '',
+        });
       }
     }
 
-    if (bestDialect) {
-      const entity = await this.db.entities.get(bestDialect.entityId);
+    for (const [entityId, best] of simBestPerEntity) {
+      const entity = await this.db.entities.get(entityId);
       if (entity) {
-        return {
+        maybeStore({
           entity,
-          dialect: bestDialect,
+          dialect: best.dialect,
           level: 'similarity',
-          score: bestScore,
-          inputValue: bestInputValue,
-          matchedPattern: bestDialect.pattern,
-        };
+          score: best.score,
+          inputValue: best.inputValue,
+          matchedPattern: best.dialect.pattern,
+        });
       }
     }
 
-    return undefined;
+    // Sort: tier rank desc, then score desc
+    return [...bestPerEntity.values()].sort((a, b) => {
+      const rd = tierRank[b.level] - tierRank[a.level];
+      if (rd !== 0) return rd;
+      return b.score - a.score;
+    });
+  }
+
+  /**
+   * Run the three-tier matching pipeline against the provided description
+   * values and return the best `MatchEvidence`, or `undefined` if no match
+   * meets the required confidence.
+   *
+   * Delegates to `findAllMatchingEntities` and returns the single top result.
+   *
+   * @param rawDescriptions  Map of column header → raw bank description value.
+   * @param searchKeys       Map of column header → tokenised search key.
+   * @param similarityThreshold  Minimum Levenshtein similarity score (0–1).
+   *                             Defaults to `0.8`.
+   */
+  async findMatchingEntity(
+    rawDescriptions: Record<string, string>,
+    searchKeys?: Record<string, string>,
+    similarityThreshold = 0.8,
+  ): Promise<MatchEvidence | undefined> {
+    const all = await this.findAllMatchingEntities(rawDescriptions, searchKeys, similarityThreshold);
+    return all[0];
+  }
+  /**
+   * Check whether a dialect with the same `pattern + scope + sourceField +
+   * entityId` quad already exists in the database.
+   * Used by `onLabelCommit` to prevent duplicate dialect entries when the
+   * same pattern is committed more than once for the same entity.
+   */
+  async dialectExists(
+    entityId: number,
+    pattern: string,
+    scope: IDialect['scope'],
+    sourceField: string,
+  ): Promise<boolean> {
+    const existing = await this.getDialectsForEntity(entityId);
+    return existing.some(
+      (d) =>
+        d.pattern === pattern &&
+        d.scope === scope &&
+        d.sourceField === sourceField,
+    );
   }
 
   // ── Legacy rule API (deprecated — kept for backward compatibility) ─────────

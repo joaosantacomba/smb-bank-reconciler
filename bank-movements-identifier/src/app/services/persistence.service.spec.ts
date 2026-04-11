@@ -700,6 +700,269 @@ describe('PersistenceService', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // findAllMatchingEntities — multi-match / ambiguity detection (Task 4.6)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe('findAllMatchingEntities', () => {
+    it('returns an empty array when no dialect matches', async () => {
+      const entity = await service.findOrCreateEntity('Netflix');
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'NETFLIX',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: Date.now(),
+      });
+
+      const results = await service.findAllMatchingEntities({ Description: 'AMAZON' });
+      expect(results).toHaveLength(0);
+    });
+
+    it('returns a single result when only one entity matches', async () => {
+      const entity = await service.findOrCreateEntity('Netflix');
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'NETFLIX SUBSCRIPTION',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: Date.now(),
+      });
+
+      const results = await service.findAllMatchingEntities({ Description: 'NETFLIX SUBSCRIPTION' });
+      expect(results).toHaveLength(1);
+      expect(results[0].entity.name).toBe('Netflix');
+      expect(results[0].level).toBe('exact');
+    });
+
+    it('returns multiple results when the same pattern is associated with multiple entities', async () => {
+      const entityA = await service.findOrCreateEntity('Entity A');
+      const entityB = await service.findOrCreateEntity('Entity B');
+      const now = Date.now();
+
+      await service.addDialect({
+        entityId: entityA.id!,
+        pattern: 'SHARED PATTERN',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+      await service.addDialect({
+        entityId: entityB.id!,
+        pattern: 'SHARED PATTERN',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+
+      const results = await service.findAllMatchingEntities({ Description: 'SHARED PATTERN' });
+      expect(results).toHaveLength(2);
+      const names = results.map((r) => r.entity.name).sort();
+      expect(names).toEqual(['Entity A', 'Entity B']);
+    });
+
+    it('deduplicates: only one result per entity even if multiple dialects match', async () => {
+      const entity = await service.findOrCreateEntity('Continente');
+      const now = Date.now();
+
+      // Two exact dialects for the same entity — both match the input
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'CONTINENTE LDA',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+      // Similarity match via a different pattern — still same entity
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'CONTINENTE MODELO',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+
+      // Input exactly matches the first dialect only
+      const results = await service.findAllMatchingEntities({ Description: 'CONTINENTE LDA' });
+      expect(results).toHaveLength(1);
+      expect(results[0].entity.name).toBe('Continente');
+    });
+
+    it('results are sorted: exact matches before similarity matches', async () => {
+      const exactEntity = await service.findOrCreateEntity('ExactMatch');
+      const simEntity = await service.findOrCreateEntity('SimilarMatch');
+      const now = Date.now();
+
+      await service.addDialect({
+        entityId: exactEntity.id!,
+        pattern: 'COMPRA SUPERMERCADO',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+      await service.addDialect({
+        entityId: simEntity.id!,
+        pattern: 'COMPRA SUPERMERCADOS',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+
+      // Exact match for exactEntity; similarity match for simEntity
+      const results = await service.findAllMatchingEntities({ Description: 'COMPRA SUPERMERCADO' });
+
+      // Must have at least the exact match
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results[0].entity.name).toBe('ExactMatch');
+      expect(results[0].level).toBe('exact');
+    });
+
+    it('includes structural matches alongside exact matches from different entities', async () => {
+      const exactEntity = await service.findOrCreateEntity('ExactEntity');
+      const structEntity = await service.findOrCreateEntity('StructuralEntity');
+      const now = Date.now();
+
+      await service.addDialect({
+        entityId: exactEntity.id!,
+        pattern: 'TRF 01/03 ACME 123',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+      await service.addDialect({
+        entityId: structEntity.id!,
+        pattern: 'trf {date} acme {id}',
+        scope: 'structural',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+
+      const results = await service.findAllMatchingEntities(
+        { Description: 'TRF 01/03 ACME 123' },
+        { Description: 'trf {date} acme {id}' },
+      );
+
+      expect(results).toHaveLength(2);
+      const levels = results.map((r) => r.level);
+      expect(levels).toContain('exact');
+      expect(levels).toContain('structural');
+      // Exact must come first
+      expect(results[0].level).toBe('exact');
+    });
+
+    it('findMatchingEntity still returns the single best match (backward compat)', async () => {
+      const entityA = await service.findOrCreateEntity('Priority A');
+      const entityB = await service.findOrCreateEntity('Priority B');
+      const now = Date.now();
+
+      await service.addDialect({
+        entityId: entityA.id!,
+        pattern: 'SHARED',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 99,
+        createdAt: now,
+      });
+      await service.addDialect({
+        entityId: entityB.id!,
+        pattern: 'SHARED',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: now,
+      });
+
+      const single = await service.findMatchingEntity({ Description: 'SHARED' });
+      expect(single).toBeDefined();
+      // Both are exact; A has higher priority so its dialect is encountered first
+      expect(single?.entity.name).toBe('Priority A');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // dialectExists — duplicate dialect prevention (Task 4.6)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe('dialectExists', () => {
+    it('returns false when no matching dialect exists', async () => {
+      const entity = await service.findOrCreateEntity('Test');
+      const exists = await service.dialectExists(entity.id!, 'PATTERN', 'exact', 'Description');
+      expect(exists).toBe(false);
+    });
+
+    it('returns true when an exact duplicate exists', async () => {
+      const entity = await service.findOrCreateEntity('Test');
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'PATTERN',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: Date.now(),
+      });
+
+      const exists = await service.dialectExists(entity.id!, 'PATTERN', 'exact', 'Description');
+      expect(exists).toBe(true);
+    });
+
+    it('returns false when pattern matches but scope differs', async () => {
+      const entity = await service.findOrCreateEntity('Test');
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'PATTERN',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: Date.now(),
+      });
+
+      const exists = await service.dialectExists(entity.id!, 'PATTERN', 'structural', 'Description');
+      expect(exists).toBe(false);
+    });
+
+    it('returns false when pattern matches but sourceField differs', async () => {
+      const entity = await service.findOrCreateEntity('Test');
+      await service.addDialect({
+        entityId: entity.id!,
+        pattern: 'PATTERN',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: Date.now(),
+      });
+
+      const exists = await service.dialectExists(entity.id!, 'PATTERN', 'exact', 'Memo');
+      expect(exists).toBe(false);
+    });
+
+    it('returns false for a different entity even if pattern matches', async () => {
+      const entityA = await service.findOrCreateEntity('Entity A');
+      const entityB = await service.findOrCreateEntity('Entity B');
+      await service.addDialect({
+        entityId: entityA.id!,
+        pattern: 'PATTERN',
+        scope: 'exact',
+        sourceField: 'Description',
+        priority: 1,
+        createdAt: Date.now(),
+      });
+
+      // entityB does not have this dialect
+      const exists = await service.dialectExists(entityB.id!, 'PATTERN', 'exact', 'Description');
+      expect(exists).toBe(false);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // Legacy addRule / findMatchingRule / getAllRules / deleteRule / updateRule
   // ═══════════════════════════════════════════════════════════════════════════
 

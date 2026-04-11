@@ -4,7 +4,7 @@ import { ExcelParserService } from './services/excel-parser.service';
 import { ParsedSheet } from './models/parsed-sheet.model';
 import { PersistenceService } from './services/persistence.service';
 import { MovementTokenizerService } from './services/movement-tokenizer.service';
-import { MatchLevel } from './models/match-evidence.model';
+import { MatchEvidence, MatchLevel } from './models/match-evidence.model';
 import { IMovement } from './models/movement.model';
 import { ICanonicalEntity } from './models/canonical-entity.model';
 import { IDialect } from './models/dialect.model';
@@ -31,11 +31,13 @@ export interface MatchRow {
   descriptions: string[];
   amount: string;
   label: string;
-  source: 'auto' | 'manual' | '';
+  source: 'auto' | 'manual' | 'ambiguous' | '';
   /** The match level when source === 'auto': 'exact', 'structural', or 'similarity'. */
   matchLevel?: MatchLevel;
   /** Confidence score [0,1]. Only meaningful for similarity matches. */
   matchScore?: number;
+  /** All candidate entities when source === 'ambiguous'. */
+  candidates?: MatchEvidence[];
 }
 
 @Component({
@@ -85,10 +87,8 @@ export class AppComponent implements OnInit {
     this.parsedSheet = null;
     this.rowOverrides = new Map();
     this.columnMapping = {};
-    this.matchLabels = new Map<
-      number,
-      { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
-    >();
+    this.matchLabels = new Map();
+    this.openCandidatesFor = null;
     this.dragging = false;
     this.lastSaveSummary = null;
   }
@@ -108,11 +108,20 @@ export class AppComponent implements OnInit {
   /** column index → assigned role */
   columnMapping: Record<number, ColumnRole | ''> = {};
 
-  /** rawIndex → { label, source, matchLevel, matchScore } for the matching view */
+  /** rawIndex → match state for the matching view */
   matchLabels = new Map<
     number,
-    { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
+    {
+      label: string;
+      source: 'auto' | 'manual' | 'ambiguous' | '';
+      matchLevel?: MatchLevel;
+      matchScore?: number;
+      candidates?: MatchEvidence[];
+    }
   >();
+
+  /** rawIndex of the row whose candidate dropdown is currently open. */
+  openCandidatesFor: number | null = null;
 
   // ── Memory Tab (Task 4.4) ─────────────────────────────────────────────────
 
@@ -569,20 +578,39 @@ export class AppComponent implements OnInit {
     const movements = this.tableRows.filter((r) => r.type === 'movement');
     const newLabels = new Map<
       number,
-      { label: string; source: 'auto' | 'manual' | ''; matchLevel?: MatchLevel; matchScore?: number }
+      {
+        label: string;
+        source: 'auto' | 'manual' | 'ambiguous' | '';
+        matchLevel?: MatchLevel;
+        matchScore?: number;
+        candidates?: MatchEvidence[];
+      }
     >();
     for (const r of movements) {
       const descRecord = this.buildDescriptionRecord(r.row);
       const searchKeys = this.buildSearchKeyRecord(descRecord);
-      const match = await this.persistence.findMatchingEntity(descRecord, searchKeys);
-      newLabels.set(r.rawIndex, {
-        label: match?.entity.name ?? '',
-        source: match ? 'auto' : '',
-        matchLevel: match?.level,
-        matchScore: match?.score,
-      });
+      const matches = await this.persistence.findAllMatchingEntities(descRecord, searchKeys);
+
+      if (matches.length === 0) {
+        newLabels.set(r.rawIndex, { label: '', source: '' });
+      } else if (matches.length === 1) {
+        newLabels.set(r.rawIndex, {
+          label: matches[0].entity.name,
+          source: 'auto',
+          matchLevel: matches[0].level,
+          matchScore: matches[0].score,
+        });
+      } else {
+        // More than one distinct entity matches → ambiguous
+        newLabels.set(r.rawIndex, {
+          label: '',
+          source: 'ambiguous',
+          candidates: matches,
+        });
+      }
     }
     this.matchLabels = newLabels;
+    this.openCandidatesFor = null;
   }
 
   async onLabelCommit(rawIndex: number, value: string): Promise<void> {
@@ -595,11 +623,13 @@ export class AppComponent implements OnInit {
     const rowDisplay = this.tableRows.find((r) => r.rawIndex === rawIndex);
     if (!rowDisplay || !this.parsedSheet) return;
 
-    // Find or create the canonical entity for the typed label
+    // Find or create the canonical entity for the typed label (additive —
+    // we never remove existing dialects for other entities on this pattern).
     const entity = await this.persistence.findOrCreateEntity(trimmed);
     const now = Date.now();
 
-    // Persist a dialect for every mapped description column
+    // Persist a dialect for every mapped description column, skipping exact
+    // duplicates (same pattern + scope + sourceField + entityId quad).
     for (const [colIdxStr, role] of Object.entries(this.columnMapping)) {
       if (role !== 'description') continue;
       const colIdx = Number(colIdxStr);
@@ -608,28 +638,62 @@ export class AppComponent implements OnInit {
       if (!cellValue) continue;
 
       // ── Exact dialect ───────────────────────────────────────────────────
-      await this.persistence.addDialect({
-        entityId: entity.id!,
-        pattern: cellValue,
-        scope: 'exact',
-        sourceField: headerName,
-        priority: 1,
-        createdAt: now,
-      });
-
-      // ── Structural dialect ──────────────────────────────────────────────
-      const searchKey = this.tokenizer.generateSearchKey(cellValue);
-      if (searchKey && searchKey !== cellValue.toLowerCase()) {
+      const exactExists = await this.persistence.dialectExists(
+        entity.id!, cellValue, 'exact', headerName,
+      );
+      if (!exactExists) {
         await this.persistence.addDialect({
           entityId: entity.id!,
-          pattern: searchKey,
-          scope: 'structural',
+          pattern: cellValue,
+          scope: 'exact',
           sourceField: headerName,
           priority: 1,
           createdAt: now,
         });
       }
+
+      // ── Structural dialect ──────────────────────────────────────────────
+      const searchKey = this.tokenizer.generateSearchKey(cellValue);
+      if (searchKey && searchKey !== cellValue.toLowerCase()) {
+        const structExists = await this.persistence.dialectExists(
+          entity.id!, searchKey, 'structural', headerName,
+        );
+        if (!structExists) {
+          await this.persistence.addDialect({
+            entityId: entity.id!,
+            pattern: searchKey,
+            scope: 'structural',
+            sourceField: headerName,
+            priority: 1,
+            createdAt: now,
+          });
+        }
+      }
     }
+  }
+
+  /** Clear the entity match for a row, resetting it to unknown state. */
+  onClearMatch(rawIndex: number): void {
+    this.matchLabels.set(rawIndex, { label: '', source: '' });
+    if (this.openCandidatesFor === rawIndex) {
+      this.openCandidatesFor = null;
+    }
+  }
+
+  /** Toggle the candidate dropdown for an ambiguous row. */
+  toggleCandidates(rawIndex: number): void {
+    this.openCandidatesFor = this.openCandidatesFor === rawIndex ? null : rawIndex;
+  }
+
+  /** Select a candidate entity for an ambiguous row. */
+  selectCandidate(rawIndex: number, evidence: MatchEvidence): void {
+    this.matchLabels.set(rawIndex, {
+      label: evidence.entity.name,
+      source: 'manual',
+      matchLevel: evidence.level,
+      matchScore: evidence.score,
+    });
+    this.openCandidatesFor = null;
   }
 
   // ── History ───────────────────────────────────────────────────────────────
@@ -712,9 +776,9 @@ export class AppComponent implements OnInit {
       const result = await this.persistence.addMovements(movements);
       await this.loadHistory();
       this.lastSaveSummary = { saved: result.saved, skipped: result.skipped };
-      this.cdr.detectChanges();
     } finally {
       this.savingToHistory = false;
+      this.cdr.detectChanges();
     }
   }
 
@@ -744,6 +808,7 @@ export class AppComponent implements OnInit {
           source: entry.source,
           matchLevel: entry.matchLevel,
           matchScore: entry.matchScore,
+          candidates: entry.candidates,
         };
       });
 

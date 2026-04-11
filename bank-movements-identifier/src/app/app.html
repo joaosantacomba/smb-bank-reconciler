@@ -210,8 +210,8 @@
               </button>
             </label>
           </div>
-          <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-            <div class="overflow-auto max-h-[600px]">
+          <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-visible pb-24">
+            <div class="overflow-x-auto rounded-2xl">
               <table class="min-w-full text-sm border-collapse">
                 <thead class="sticky top-0 z-20 bg-gray-50 border-b border-gray-100">
                   <tr>
@@ -224,7 +224,9 @@
                 </thead>
                 <tbody>
                   @for (mRow of matchingRows; track mRow.rawIndex) {
-                    <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                    <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
+                      [class.bg-amber-50]="mRow.source === 'ambiguous' && openCandidatesFor !== mRow.rawIndex"
+                      [class.bg-amber-50]="mRow.source === 'ambiguous'">
                       <td class="py-4 px-4 text-sm text-gray-700 whitespace-nowrap">{{ mRow.date }}</td>
                       <td class="py-4 px-4 text-sm text-gray-700">
                         @for (desc of mRow.descriptions; track $index) {
@@ -233,21 +235,80 @@
                       </td>
                       <td class="py-4 px-4 text-sm text-gray-700 font-mono whitespace-nowrap text-right">{{ mRow.amount }}</td>
                       <td class="py-4 px-4">
-                        <input
-                          type="text"
-                          class="w-full bg-gray-50 border-none rounded-lg px-4 py-2 text-sm text-gray-800 focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
-                          [class.bg-green-50]="mRow.source === 'auto'"
-                          [class.ring-1]="mRow.source === 'auto'"
-                          [class.ring-green-200]="mRow.source === 'auto'"
-                          [class.bg-blue-50]="mRow.source === 'manual'"
-                          placeholder="Enter entity…"
-                          [value]="mRow.label"
-                          (blur)="onLabelCommit(mRow.rawIndex, $any($event.target).value)"
-                          (keydown.enter)="onLabelCommit(mRow.rawIndex, $any($event.target).value); $any($event.target).blur()"
-                        />
+                        <div class="flex items-center gap-2">
+                          @if (mRow.source === 'ambiguous') {
+                            <!-- Ambiguous: show candidate picker trigger -->
+                            <div class="relative flex-1">
+                              <button
+                                type="button"
+                                class="w-full flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+                                (click)="toggleCandidates(mRow.rawIndex)"
+                              >
+                                <span class="text-amber-600 font-medium">Select entity…</span>
+                                <span class="text-amber-400 ml-2">{{ openCandidatesFor === mRow.rawIndex ? '▲' : '▼' }}</span>
+                              </button>
+                              @if (openCandidatesFor === mRow.rawIndex) {
+                                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden">
+                                  @for (candidate of mRow.candidates; track candidate.entity.id) {
+                                    <button
+                                      type="button"
+                                      class="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
+                                      (click)="selectCandidate(mRow.rawIndex, candidate)"
+                                    >
+                                      <span class="font-medium">{{ candidate.entity.name }}</span>
+                                      <div class="flex items-center gap-1.5 ml-3">
+                                        @if (candidate.level === 'exact') {
+                                          <span class="px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-600 font-medium">exact</span>
+                                        } @else if (candidate.level === 'structural') {
+                                          <span class="px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-600 font-medium">structural</span>
+                                        } @else {
+                                          <span class="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-600 font-medium">{{ (candidate.score * 100) | number:'1.0-0' }}%</span>
+                                        }
+                                      </div>
+                                    </button>
+                                  }
+                                  <!-- Manual entry option -->
+                                  <div class="border-t border-gray-100 px-4 py-2">
+                                    <input
+                                      type="text"
+                                      class="w-full bg-gray-50 border-none rounded-lg px-3 py-1.5 text-sm text-gray-800 focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                                      placeholder="Or type a new entity…"
+                                      (blur)="onLabelCommit(mRow.rawIndex, $any($event.target).value)"
+                                      (keydown.enter)="onLabelCommit(mRow.rawIndex, $any($event.target).value); $any($event.target).blur()"
+                                    />
+                                  </div>
+                                </div>
+                              }
+                            </div>
+                          } @else {
+                            <input
+                              type="text"
+                              class="flex-1 bg-gray-50 border-none rounded-lg px-4 py-2 text-sm text-gray-800 focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                              [class.bg-green-50]="mRow.source === 'auto'"
+                              [class.ring-1]="mRow.source === 'auto'"
+                              [class.ring-green-200]="mRow.source === 'auto'"
+                              [class.bg-blue-50]="mRow.source === 'manual'"
+                              placeholder="Enter entity…"
+                              [value]="mRow.label"
+                              (blur)="onLabelCommit(mRow.rawIndex, $any($event.target).value)"
+                              (keydown.enter)="onLabelCommit(mRow.rawIndex, $any($event.target).value); $any($event.target).blur()"
+                            />
+                          }
+                          <!-- Clear button: visible when row has any match state -->
+                          @if (mRow.source !== '') {
+                            <button
+                              type="button"
+                              class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-gray-300 hover:bg-red-50 hover:text-red-400 transition-colors"
+                              title="Clear match"
+                              (click)="onClearMatch(mRow.rawIndex)"
+                            >✕</button>
+                          }
+                        </div>
                       </td>
                       <td class="py-4 px-4 whitespace-nowrap">
-                        @if (mRow.source === 'auto' && mRow.matchLevel === 'similarity') {
+                        @if (mRow.source === 'ambiguous') {
+                          <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-600">⚠ ambiguous</span>
+                        } @else if (mRow.source === 'auto' && mRow.matchLevel === 'similarity') {
                           <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-600"
                             [title]="'Similarity match — confidence: ' + ((mRow.matchScore ?? 0) * 100 | number:'1.0-0') + '%'">
                             ? suggested {{ (mRow.matchScore ?? 0) * 100 | number:'1.0-0' }}%
@@ -494,7 +555,7 @@
 
   <!-- Floating Action Bar: Save to History (Mapping tab) -->
   @if (activeTab === 'mapping' && matchingRows.length) {
-    <div class="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
+    <div class="fixed bottom-0 left-0 right-0 z-20 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
       @if (lastSaveSummary) {
         <span class="px-4 py-2.5 rounded-full bg-green-50 text-green-700 text-sm font-medium border border-green-100">
           ✓ {{ lastSaveSummary.saved }} movement{{ lastSaveSummary.saved === 1 ? '' : 's' }} saved
@@ -522,7 +583,7 @@
 
   <!-- Floating Action Bar: Approve Configuration (Upload tab) -->
   @if (activeTab === 'upload' && parsedSheet) {
-    <div class="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
+    <div class="fixed bottom-0 left-0 right-0 z-20 flex items-center justify-center gap-4 px-6 py-4 bg-white/80 backdrop-blur border-t border-gray-100 shadow-lg">
       @if (configApproved) {
         <span class="px-4 py-2.5 rounded-full bg-green-50 text-green-700 text-sm font-medium border border-green-100">
           ✓ Configuration approved — go to <strong>Mapping</strong> to assign entities.

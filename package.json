@@ -1,4 +1,9 @@
 {
+  "name": "smb-bank-reconciler",
+  "version": "0.0.0",
+  "scripts": {
+    "start": "ng serve"
+  },
   "dependencies": {
     "xlsx": "^0.18.5"
   },
